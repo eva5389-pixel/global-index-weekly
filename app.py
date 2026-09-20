@@ -112,10 +112,19 @@ def stats(ticker):
     trend="轉強" if last>ma20 and wp>0 else ("轉弱" if last<ma20 and wp<0 else "震盪")
     return {"最新":last,"本週%":wp,"近1月%":mp,"MA20":ma20,"趨勢":trend,"日期":d["日期"].iloc[-1].date()},d
 
-def explain(name,x):
+def weekly_commentary(name,x,d):
     if not x:return "資料暫缺。"
+    z,t=technical(d)
     direction="上漲" if x["本週%"]>0 else "下跌"
-    return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。這是價格與均線的技術描述，不代表未來方向。"
+    # 價格/技術面能直接由行情計算；不把未取得的新聞或總經事件硬寫成原因。
+    tech=f"技術面方面，KD為 K {t['K']:.1f}、D {t['D']:.1f}（{t['KD解讀']}）；MACD {t['MACD解讀']}；{t['量能']}。{t['KD背離']}。"
+    return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。{tech}目前這一版的漲跌原因只根據價格、動能與量能描述；新聞、經濟數據與資金面尚未接入時，不會自行臆測事件原因。"
+
+def explain(name,x,d=None):
+    if not x:return "資料暫缺。"
+    if d is not None and not d.empty:return weekly_commentary(name,x,d)
+    direction="上漲" if x["本週%"]>0 else "下跌"
+    return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。"
 
 st.header("📊 技術線總覽")
 tech_region=st.selectbox("技術線市場",list(MARKETS),key="tech_region")
@@ -151,8 +160,17 @@ with tab2:
             c1.metric("最新",f"{x['最新']:,.2f}"); c2.metric("本週",f"{x['本週%']:+.2f}%"); c3.metric("近1月",f"{x['近1月%']:+.2f}%"); c4.metric("趨勢",x["趨勢"])
             chart=d.tail(30).copy()
             st.altair_chart(alt.Chart(chart).mark_line().encode(x="日期:T",y=alt.Y("收盤:Q",scale=alt.Scale(zero=False))).properties(height=220),use_container_width=True)
+            st.markdown("**本週動態拆解**")
+            zt,tt=technical(d)
+            e1,e2,e3=st.columns(3)
+            e1.write("**價格／技術**")
+            e1.write(f"本週 {x['本週%']:+.2f}%｜近1月 {x['近1月%']:+.2f}%｜{x['趨勢']}")
+            e2.write("**經濟數據／事件**")
+            e2.write("尚未接入即時事件資料源，不自行補寫原因。")
+            e3.write("**資金／風險背景**")
+            e3.write(f"{tt['量能']}；KD背離："+("有" if "偵測到" in tt["KD背離"] else "無"))
             st.markdown("**30秒解說稿**")
-            st.write(explain(name,x))
+            st.write(explain(name,x,d))
         else: st.warning("行情暫時無法取得。")
         st.divider()
 with tab3:
