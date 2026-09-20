@@ -180,16 +180,21 @@ def gemini_polish_report(report,api_key):
     if not text:raise ValueError("Gemini 沒有回傳可用文字")
     return text
 
-def pptx_market_order(uploaded):
-    if uploaded is None:return DEFAULT_REPORT_ORDER
+def pptx_market_setup(uploaded):
+    if uploaded is None:return DEFAULT_REPORT_ORDER,{}
     from pptx import Presentation
-    prs=Presentation(BytesIO(uploaded.getvalue())); found=[]
+    import re
+    prs=Presentation(BytesIO(uploaded.getvalue())); found=[]; levels={}
     aliases={"日經":"日本","韓股":"韓國","韓國":"韓國","香港恆生":"香港恆生","上證":"上證A股","上証":"上證A股","香港國企":"香港國企","台灣加權":"台灣"}
     for slide in prs.slides:
         text="\n".join(sh.text for sh in slide.shapes if hasattr(sh,"text"))
+        market=next((name for alias,name in aliases.items() if alias in text),None)
+        period=next((x for x in ("日線","週線","月線") if x in text),None)
+        points=[float(x.replace(",","")) for x in re.findall(r"\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b",text)]
+        if market and period and len(points)>=2:levels[(market,period)]={"support":min(points[-2:]),"resistance":max(points[-2:])}
         for alias,name in aliases.items():
             if alias in text and name not in found:found.append(name)
-    return found+[x for x in DEFAULT_REPORT_ORDER if x not in found]
+    return found+[x for x in DEFAULT_REPORT_ORDER if x not in found],levels
 
 def timeframe_snapshot(d,label):
     frame=d if label=="日線" else resample_ohlcv(d,label)
@@ -202,53 +207,80 @@ def timeframe_snapshot(d,label):
 def fmt_level(value):return f"{value:,.0f}"
 
 def meeting_sentence(s):
-    return (f"{s['label']}：最新 {fmt_level(s['last'])} 點，價格結構{s['structure']}。"
-            f"KD為K {s['K']:.1f}、D {s['D']:.1f}，{s['KD解讀']}；MACD為DIF {s['DIF']:.2f}、OSC {s['OSC']:.2f}，{s['MACD解讀']}；"
-            f"{s['量能']}；{s['KD背離']}。支撐 {fmt_level(s['support'])} 點、壓力 {fmt_level(s['resistance'])} 點。")
+    volume="放量" if "放量" in s["量能"] else ("量縮" if "量縮" in s["量能"] else "量能一般")
+    divergence="未見明顯KD背離" if s["KD背離"].startswith("未") else s["KD背離"].replace("⚠️ ","").replace("🟢 ","")
+    return (f"{s['label']}：KD{s['KD解讀']}，MACD{s['MACD解讀']}，{volume}，{divergence}，"
+            f"{fmt_level(s['support'])}點支撐、{fmt_level(s['resistance'])}點壓力。")
 
-def collect_ne_asia_report(order):
+def collect_ne_asia_report(order,drawn_levels=None):
+    drawn_levels=drawn_levels or {}
     output=[]
     for name in order:
         info=NE_ASIA_REPORT[name]; d=yahoo(info["ticker"],"2y")
-        output.append({"name":name,"display":info["顯示"],"date":pd.to_datetime(d["日期"].iloc[-1]).date(),"frames":[timeframe_snapshot(d,x) for x in ("日線","週線","月線")]})
+        frames=[timeframe_snapshot(d,x) for x in ("日線","週線","月線")]
+        for frame in frames:
+            if (name,frame["label"]) in drawn_levels:frame.update(drawn_levels[(name,frame["label"])])
+        output.append({"name":name,"display":info["顯示"],"date":pd.to_datetime(d["日期"].iloc[-1]).date(),"frames":frames})
     return output
 
 def style_report_doc(doc):
     from docx.shared import Pt
-    style=doc.styles["Normal"]; style.font.name="Microsoft JhengHei"; style.font.size=Pt(10.5)
-    for section in doc.sections:
-        section.top_margin=section.bottom_margin=Pt(42); section.left_margin=section.right_margin=Pt(42)
+    from docx.oxml.ns import qn
+    style=doc.styles["Normal"]; style.font.name="DFKai-SB"; style._element.rPr.rFonts.set(qn("w:eastAsia"),"標楷體"); style.font.size=Pt(10)
+
+def format_doc_fonts(doc,size=10):
+    from docx.shared import Pt
+    from docx.oxml.ns import qn
+    containers=list(doc.paragraphs)+[p for table in doc.tables for row in table.rows for cell in row.cells for p in cell.paragraphs]
+    for p in containers:
+        for run in p.runs:
+            run.font.name="DFKai-SB"; run._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"),"標楷體"); run.font.size=Pt(size)
 
 def build_meeting_doc(data):
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+    from docx.shared import Mm
     doc=Document(); style_report_doc(doc); now=datetime.now(); roc=now.year-1911
-    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER; r=p.add_run(f"{roc}/{now.month}/{now.day} 東北亞市場會議記錄"); r.bold=True; r.font.size=Pt(16)
-    doc.add_paragraph("亞洲地區：")
-    table=doc.add_table(rows=1,cols=2); table.style="Table Grid"; table.rows[0].cells[0].text="國別"; table.rows[0].cells[1].text="最新點位與技術線型分析"
+    section=doc.sections[0]; section.page_width=Mm(210); section.page_height=Mm(297); section.top_margin=section.bottom_margin=Mm(11.5); section.left_margin=section.right_margin=Mm(9.5)
+    doc.add_paragraph(f"{roc}/{now.month}/{now.day}會議記錄：")
+    p=doc.add_paragraph(); r=p.add_run("亞洲地區："); r.bold=True
+    table=doc.add_table(rows=1,cols=2); table.style="Table Grid"; table.autofit=False
+    table.columns[0].width=Mm(15); table.columns[1].width=Mm(175)
+    table.rows[0].cells[0].text="國別"; table.rows[0].cells[1].text="技術線型分析"
     for item in data:
         cells=table.add_row().cells; cells[0].text=item["name"]; cells[1].text="\n".join(meeting_sentence(x) for x in item["frames"])
-    out=BytesIO(); doc.save(out); return out.getvalue()
+    for ri,row in enumerate(table.rows):
+        row.cells[0].vertical_alignment=WD_CELL_VERTICAL_ALIGNMENT.CENTER
+        for ci,cell in enumerate(row.cells):
+            for p in cell.paragraphs:
+                p.alignment=WD_ALIGN_PARAGRAPH.CENTER if ri==0 or ci==0 else WD_ALIGN_PARAGRAPH.JUSTIFY
+                p.paragraph_format.line_spacing=Pt(12)
+    format_doc_fonts(doc,10); out=BytesIO(); doc.save(out); return out.getvalue()
 
 def build_barometer_doc(data):
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.shared import Pt
-    doc=Document(); style_report_doc(doc); p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
-    r=p.add_run("本週重點市場指數預測"); r.bold=True; r.font.size=Pt(16); doc.add_paragraph("評等：部分加碼／持有／部分減碼")
-    table=doc.add_table(rows=1,cols=5); table.style="Table Grid"
-    for cell,text in zip(table.rows[0].cells,["市場（指數）","最新點位","本週走勢預測","建議","短線壓力／支撐"]):cell.text=text
-    for item in data:
+    from docx.shared import Mm
+    doc=Document(); style_report_doc(doc); section=doc.sections[0]; section.page_width=Mm(210); section.page_height=Mm(297)
+    section.top_margin=section.bottom_margin=Mm(25.4); section.left_margin=section.right_margin=Mm(31.75)
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run("本週重點市場指數預測"); r.bold=True; r.font.size=Pt(11); doc.add_paragraph("評等：加碼　部分加碼　持有　部分減碼　減碼")
+    table=doc.add_table(rows=1,cols=4); table.style="Table Grid"
+    for cell,text in zip(table.rows[0].cells,["市場(指數)","本週走勢預測","投資評等","短線壓力/支撐"]):cell.text=text
+    by_display={x["display"]:x for x in data}
+    markets=["標普500指數","那斯達克指數","德國指數","日經225指數","香港恆生指數","澳洲指數","中國上證A股指數","香港國企指數","台灣加權指數","韓國指數","泰國指數","印尼指數","印度指數","巴西指數","美元指數","歐元","日幣","澳幣","南非幣","人民幣","Amex石油類股指數","彭博礦業指數","黃金現貨指數","DAX全球農金指數","費城金銀指數"]
+    for market in markets:
+        item=by_display.get(market); cells=table.add_row().cells; cells[0].text=market
+        if not item:continue
         daily,weekly,_=item["frames"]
         if daily["structure"]==weekly["structure"]=="偏強":forecast,action="整理偏強","部分加碼"
         elif daily["structure"]==weekly["structure"]=="偏弱":forecast,action="整理偏弱","部分減碼"
         else:forecast,action="區間整理","持有"
-        cells=table.add_row().cells
-        values=[item["display"],fmt_level(daily["last"]),forecast,action,f"支撐 {fmt_level(daily['support'])}、壓力 {fmt_level(daily['resistance'])}"]
-        for cell,value in zip(cells,values):cell.text=value
-    doc.add_paragraph("資料日期："+"；".join(f"{x['name']} {x['date']}" for x in data))
-    out=BytesIO(); doc.save(out); return out.getvalue()
+        for cell,value in zip(cells[1:],[forecast,action,f"支撐{fmt_level(daily['support'])}、壓力{fmt_level(daily['resistance'])}"]):cell.text=value
+    format_doc_fonts(doc,11); out=BytesIO(); doc.save(out); return out.getvalue()
 
 def render_ne_asia_generator():
     st.header("📑 一鍵產生東北亞會議文件")
@@ -257,7 +289,7 @@ def render_ne_asia_generator():
     if st.button("一鍵更新點位並產生會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
         try:
             with st.spinner("正在更新六個市場的最新點位與技術線……"):
-                order=pptx_market_order(tech_file); data=collect_ne_asia_report(order)
+                order,drawn_levels=pptx_market_setup(tech_file); data=collect_ne_asia_report(order,drawn_levels)
                 st.session_state["ne_meeting_doc"]=build_meeting_doc(data); st.session_state["ne_barometer_doc"]=build_barometer_doc(data)
                 st.session_state["ne_preview"]=pd.DataFrame([{"順序":i+1,"市場":x["name"],"最新點位":x["frames"][0]["last"],"日線支撐":x["frames"][0]["support"],"日線壓力":x["frames"][0]["resistance"],"資料日期":x["date"]} for i,x in enumerate(data)])
         except Exception as e:st.error("文件產生失敗："+str(e))
