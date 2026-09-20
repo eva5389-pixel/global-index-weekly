@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import altair as alt
+import hashlib
 from io import BytesIO
 from datetime import datetime
 
@@ -379,6 +380,17 @@ def render_ne_asia_generator():
     st.header("📑 一鍵產生全部國家技術線報告")
     st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；整合日／週／月技術線、一週技術變化與投資導航報告。")
     tech_file=st.file_uploader("上傳技術線簡報（PPTX）",type=["pptx"],key="ne_asia_tech_pptx",help="上傳後會優先採用你畫在各張日線、週線、月線圖上的支撐與壓力點位；未上傳時才由行情估算。")
+    if tech_file is not None:
+        file_hash=hashlib.sha256(tech_file.getvalue()).hexdigest()
+        if st.session_state.get("ne_tech_file_hash")!=file_hash:
+            for key in ("ne_meeting_doc","ne_barometer_doc","ne_full_report","ne_full_report_edit","ne_preview"):
+                st.session_state.pop(key,None)
+            st.session_state["ne_tech_file_hash"]=file_hash
+        try:
+            _,level_preview=pptx_market_setup(tech_file)
+            jp_day=level_preview.get(("日本","日線"))
+            if jp_day:st.success(f"已讀取日本日線：支撐 {fmt_level(jp_day['support'])}、壓力 {fmt_level(jp_day['resistance'])}")
+        except Exception as e:st.warning("技術線簡報點位預覽失敗："+str(e))
     navigation_file=st.file_uploader("上傳投資導航報告（選填）",type=["pdf","docx","pptx","txt","md","csv"],key="combined_navigation_file")
     if st.button("一鍵產生六國技術線報告＋會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
         try:
