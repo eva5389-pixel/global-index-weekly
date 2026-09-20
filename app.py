@@ -173,8 +173,9 @@ def build_technical_report(name,d,news_text=""):
 
 def gemini_polish_report(report,api_key):
     prompt=(
-        "你是繁體中文市場研究講稿編輯。請把以下技術線報告整理成自然、可直接口述的報告。"
+        "你是繁體中文市場研究講稿編輯。請把以下六國技術線、一週技術變化與投資導航內容整合成自然、可直接口述的報告。"
         "必須維持原始國家順序，以及每國日線、週線、月線的順序；每個週期依序涵蓋價格結構、KD、MACD、量能、KD背離。"
+        "每個國家接著說明一週價格變化與技術動能變化，再把投資導航內容放入相關市場段落；無法歸類的內容放在最後的市場重點。"
         "新聞只能作為背景，不能虛構因果、數字、來源或未提供的事件；所有原始數值必須保留。"
         "最後加入多週期結論、觀察重點及『僅供市場研究，不構成投資建議』。\n\n原始報告：\n"+report
     )
@@ -283,11 +284,26 @@ def detailed_technical_section(s):
             f"量能：{s['量能']}。\n"
             f"KD背離：{s['KD背離']}。")
 
-def build_all_markets_report(data):
+def build_all_markets_report(data,navigation_text=""):
     reports=[]
     for item in data:
-        reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"]))
-    return "\n\n"+("\n\n"+("="*28)+"\n\n").join(reports)+"\n\n本報告僅供市場研究，不構成投資建議。"
+        w=item["weekly_change"]
+        weekly=(f"【一週技術線變化】\n收盤一週變動 {w['price_change']:+.2f}%，"
+                f"K值變動 {w['k_change']:+.1f}、D值變動 {w['d_change']:+.1f}，"
+                f"OSC變動 {w['osc_change']:+.2f}；{w['summary']}。")
+        reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"])+"\n\n"+weekly)
+    result="\n\n"+("\n\n"+("="*28)+"\n\n").join(reports)
+    if navigation_text.strip():result+="\n\n"+("="*28)+"\n\n【投資導航報告內容】\n"+navigation_text.strip()
+    return result+"\n\n本報告僅供市場研究，不構成投資建議。"
+
+def weekly_technical_change(d):
+    z,_=technical(d); lookback=min(5,len(z)-1); current=z.iloc[-1]; prior=z.iloc[-1-lookback]
+    price_change=(float(current["收盤"])/float(prior["收盤"])-1)*100
+    k_change=float(current["K"]-prior["K"]); d_change=float(current["D"]-prior["D"]); osc_change=float(current["OSC"]-prior["OSC"])
+    if price_change>0 and k_change>0 and osc_change>0:summary="價格與技術動能同步轉強"
+    elif price_change<0 and k_change<0 and osc_change<0:summary="價格與技術動能同步轉弱"
+    else:summary="價格與技術動能不同步，訊號分歧"
+    return {"price_change":price_change,"k_change":k_change,"d_change":d_change,"osc_change":osc_change,"summary":summary}
 
 def collect_ne_asia_report(order,drawn_levels=None):
     drawn_levels=drawn_levels or {}
@@ -297,7 +313,7 @@ def collect_ne_asia_report(order,drawn_levels=None):
         frames=[timeframe_snapshot(d,x) for x in ("日線","週線","月線")]
         for frame in frames:
             if (name,frame["label"]) in drawn_levels:frame.update(drawn_levels[(name,frame["label"])])
-        output.append({"name":name,"display":info["顯示"],"date":pd.to_datetime(d["日期"].iloc[-1]).date(),"frames":frames})
+        output.append({"name":name,"display":info["顯示"],"date":pd.to_datetime(d["日期"].iloc[-1]).date(),"frames":frames,"weekly_change":weekly_technical_change(d)})
     return output
 
 def style_report_doc(doc):
@@ -361,14 +377,16 @@ def build_barometer_doc(data):
 
 def render_ne_asia_generator():
     st.header("📑 一鍵產生全部國家技術線報告")
-    st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；各市場依日線 → 週線 → 月線分析。")
+    st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；整合日／週／月技術線、一週技術變化與投資導航報告。")
     tech_file=st.file_uploader("上傳技術線簡報（PPTX）",type=["pptx"],key="ne_asia_tech_pptx",help="上傳後會優先採用你畫在各張日線、週線、月線圖上的支撐與壓力點位；未上傳時才由行情估算。")
+    navigation_file=st.file_uploader("上傳投資導航報告（選填）",type=["pdf","docx","pptx","txt","md","csv"],key="combined_navigation_file")
     if st.button("一鍵產生六國技術線報告＋會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
         try:
             with st.spinner("正在更新六個市場的最新點位與技術線……"):
                 order,drawn_levels=pptx_market_setup(tech_file); data=collect_ne_asia_report(order,drawn_levels)
+                navigation_text=extract_uploaded_text(navigation_file) if navigation_file is not None else ""
                 st.session_state["ne_meeting_doc"]=build_meeting_doc(data); st.session_state["ne_barometer_doc"]=build_barometer_doc(data)
-                full_report=build_all_markets_report(data)
+                full_report=build_all_markets_report(data,navigation_text)
                 st.session_state["ne_full_report"]=full_report; st.session_state["ne_full_report_edit"]=full_report
                 st.session_state["ne_preview"]=pd.DataFrame([{"順序":i+1,"市場":x["name"],"最新點位":x["frames"][0]["last"],"日線支撐":x["frames"][0]["support"],"日線壓力":x["frames"][0]["resistance"],"資料日期":x["date"]} for i,x in enumerate(data)])
         except Exception as e:st.error("文件產生失敗："+str(e))
@@ -378,7 +396,7 @@ def render_ne_asia_generator():
         c1.download_button("下載更新後會議記錄 DOCX",st.session_state["ne_meeting_doc"],f"會議記錄_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         c2.download_button("下載更新後晴雨表 DOCX",st.session_state["ne_barometer_doc"],f"晴雨表_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         st.markdown("#### 📝 全部國家完整技術線報告")
-        st.caption("依簡報市場順序逐國產生，每國固定為日線 → 週線 → 月線；各週期固定為價格結構 → KD → MACD → 量能 → KD背離。")
+        st.caption("每國固定為日線 → 週線 → 月線 → 一週技術變化，再整合投資導航內容；各週期固定為價格結構 → KD → MACD → 量能 → KD背離。")
         all_report=st.text_area("完整技術線報告（可修改或複製）",height=650,key="ne_full_report_edit")
         st.download_button("下載全部國家技術線報告 TXT",all_report.encode("utf-8-sig"),f"全部國家技術線報告_{stamp}.txt","text/plain")
         try:saved_ne_key=st.secrets.get("GEMINI_API_KEY","")
@@ -451,9 +469,6 @@ def explain(name,x,d=None):
     return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。"
 
 render_ne_asia_generator()
-st.divider()
-
-render_navigation_script_generator()
 st.divider()
 
 st.header("📊 單一指數技術線檢視")
