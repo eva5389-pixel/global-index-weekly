@@ -387,9 +387,17 @@ def render_ne_asia_generator():
                 st.session_state.pop(key,None)
             st.session_state["ne_tech_file_hash"]=file_hash
         try:
-            _,level_preview=pptx_market_setup(tech_file)
-            jp_day=level_preview.get(("日本","日線"))
-            if jp_day:st.success(f"已讀取日本日線：支撐 {fmt_level(jp_day['support'])}、壓力 {fmt_level(jp_day['resistance'])}")
+            preview_order,level_preview=pptx_market_setup(tech_file)
+            level_rows=[]
+            for market in preview_order:
+                row={"市場":market}
+                for period in ("日線","週線","月線"):
+                    level=level_preview.get((market,period))
+                    row[f"{period}支撐"]=fmt_level(level["support"]) if level else "未讀取"
+                    row[f"{period}壓力"]=fmt_level(level["resistance"]) if level else "未讀取"
+                level_rows.append(row)
+            st.success("已讀取六個市場的日線、週線、月線支撐壓力")
+            st.dataframe(pd.DataFrame(level_rows),use_container_width=True,hide_index=True)
         except Exception as e:st.warning("技術線簡報點位預覽失敗："+str(e))
     navigation_file=st.file_uploader("上傳投資導航報告（選填）",type=["pdf","docx","pptx","txt","md","csv"],key="combined_navigation_file")
     if st.button("一鍵產生六國技術線報告＋會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
