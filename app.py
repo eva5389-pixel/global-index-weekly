@@ -163,7 +163,7 @@ def build_technical_report(name,d,news_text=""):
 def gemini_polish_report(report,api_key):
     prompt=(
         "你是繁體中文市場研究講稿編輯。請把以下技術線報告整理成自然、可直接口述的報告。"
-        "必須維持日線、週線、月線的順序，且每個週期依序涵蓋價格結構、KD、MACD、量能、KD背離。"
+        "必須維持原始國家順序，以及每國日線、週線、月線的順序；每個週期依序涵蓋價格結構、KD、MACD、量能、KD背離。"
         "新聞只能作為背景，不能虛構因果、數字、來源或未提供的事件；所有原始數值必須保留。"
         "最後加入多週期結論、觀察重點及『僅供市場研究，不構成投資建議』。\n\n原始報告：\n"+report
     )
@@ -211,6 +211,20 @@ def meeting_sentence(s):
     divergence="未見明顯KD背離" if s["KD背離"].startswith("未") else s["KD背離"].replace("⚠️ ","").replace("🟢 ","")
     return (f"{s['label']}：KD{s['KD解讀']}，MACD{s['MACD解讀']}，{volume}，{divergence}，"
             f"{fmt_level(s['support'])}點支撐、{fmt_level(s['resistance'])}點壓力。")
+
+def detailed_technical_section(s):
+    return (f"【{s['label']}】\n"
+            f"價格結構：最新收盤 {s['last']:,.2f}，位於短中期均線相對位置呈現{s['structure']}。\n"
+            f"KD：K值 {s['K']:.1f}、D值 {s['D']:.1f}，{s['KD解讀']}。\n"
+            f"MACD：DIF {s['DIF']:.2f}、訊號線 {s['MACD']:.2f}、OSC {s['OSC']:.2f}；{s['MACD解讀']}。\n"
+            f"量能：{s['量能']}。\n"
+            f"KD背離：{s['KD背離']}。")
+
+def build_all_markets_report(data):
+    reports=[]
+    for item in data:
+        reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"]))
+    return "\n\n"+("\n\n"+("="*28)+"\n\n").join(reports)+"\n\n本報告僅供市場研究，不構成投資建議。"
 
 def collect_ne_asia_report(order,drawn_levels=None):
     drawn_levels=drawn_levels or {}
@@ -291,6 +305,8 @@ def render_ne_asia_generator():
             with st.spinner("正在更新六個市場的最新點位與技術線……"):
                 order,drawn_levels=pptx_market_setup(tech_file); data=collect_ne_asia_report(order,drawn_levels)
                 st.session_state["ne_meeting_doc"]=build_meeting_doc(data); st.session_state["ne_barometer_doc"]=build_barometer_doc(data)
+                full_report=build_all_markets_report(data)
+                st.session_state["ne_full_report"]=full_report; st.session_state["ne_full_report_edit"]=full_report
                 st.session_state["ne_preview"]=pd.DataFrame([{"順序":i+1,"市場":x["name"],"最新點位":x["frames"][0]["last"],"日線支撐":x["frames"][0]["support"],"日線壓力":x["frames"][0]["resistance"],"資料日期":x["date"]} for i,x in enumerate(data)])
         except Exception as e:st.error("文件產生失敗："+str(e))
     if "ne_preview" in st.session_state:
@@ -298,6 +314,21 @@ def render_ne_asia_generator():
         c1,c2=st.columns(2); stamp=datetime.now().strftime("%Y%m%d")
         c1.download_button("下載更新後會議記錄 DOCX",st.session_state["ne_meeting_doc"],f"會議記錄_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         c2.download_button("下載更新後晴雨表 DOCX",st.session_state["ne_barometer_doc"],f"晴雨表_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        st.markdown("#### 📝 全部國家完整技術線報告")
+        st.caption("依簡報市場順序逐國產生，每國固定為日線 → 週線 → 月線；各週期固定為價格結構 → KD → MACD → 量能 → KD背離。")
+        all_report=st.text_area("完整技術線報告（可修改或複製）",height=650,key="ne_full_report_edit")
+        st.download_button("下載全部國家技術線報告 TXT",all_report.encode("utf-8-sig"),f"全部國家技術線報告_{stamp}.txt","text/plain")
+        try:saved_ne_key=st.secrets.get("GEMINI_API_KEY","")
+        except Exception:saved_ne_key=""
+        ne_api_key=st.text_input("Gemini API Key（選填）",value=saved_ne_key,type="password",key="ne_gemini_key")
+        if st.button("使用 Gemini 整理全部國家講稿",key="ne_gemini_btn"):
+            if not ne_api_key.strip():st.warning("請先輸入 Gemini API Key。")
+            else:
+                try:
+                    with st.spinner("Gemini 正在整理全部國家講稿……"):
+                        polished=gemini_polish_report(all_report,ne_api_key.strip())
+                    st.session_state["ne_full_report"]=polished; st.session_state["ne_full_report_edit"]=polished; st.rerun()
+                except Exception as e:st.error("Gemini 產生失敗："+str(e))
 
 def tech_panel(name,d):
     z,t=technical(d)
