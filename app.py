@@ -207,9 +207,18 @@ def timeframe_snapshot(d,label):
 def fmt_level(value):return f"{value:,.0f}"
 
 def meeting_sentence(s):
-    volume="放量" if "放量" in s["量能"] else ("量縮" if "量縮" in s["量能"] else "量能一般")
-    divergence="未見明顯KD背離" if s["KD背離"].startswith("未") else s["KD背離"].replace("⚠️ ","").replace("🟢 ","")
-    return (f"{s['label']}：KD{s['KD解讀']}，MACD{s['MACD解讀']}，{volume}，{divergence}，"
+    k,d=s["K"],s["D"]; average=(k+d)/2; gap=abs(k-d)
+    zone="高檔整理" if average>=80 else ("低檔整理" if average<=20 else "中檔整理")
+    if gap<2:direction="K、D值糾結"
+    elif k>d:direction="K值高於D值，開口向上"
+    else:direction="K值低於D值，開口向下"
+    saturation="，呈現高檔鈍化" if k>=80 and d>=80 else ("，呈現低檔鈍化" if k<=20 and d<=20 else "")
+    if s["DIF"]>s["MACD"] and s["OSC"]>0:momentum="動能偏強"
+    elif s["DIF"]<s["MACD"] and s["OSC"]<0:momentum="動能偏弱"
+    else:momentum="動能分歧"
+    divergence=""
+    if not s["KD背離"].startswith("未"):divergence="，"+s["KD背離"].replace("⚠️ ","").replace("🟢 ","")
+    return (f"{s['label']}：KD於{zone}，{direction}{saturation}，{momentum}{divergence}，"
             f"{fmt_level(s['support'])}點支撐、{fmt_level(s['resistance'])}點壓力。")
 
 def detailed_technical_section(s):
