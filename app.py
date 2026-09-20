@@ -130,13 +130,13 @@ st.header("📊 技術線總覽")
 tech_region=st.selectbox("技術線市場",list(MARKETS),key="tech_region")
 tech_name=st.selectbox("技術線指數",list(MARKETS[tech_region]),key="tech_name")
 try:
-    _,tech_d=stats(MARKETS[tech_region][tech_name])
+    tech_d=yahoo(MARKETS[tech_region][tech_name],"2y")
     tech_panel(tech_name,tech_d)
 except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
 st.divider()
 
-tab1,tab2,tab3=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產"])
+tab1,tab2,tab3,tab4=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利"])
 rows=[]; cache={}
 for region,items in MARKETS.items():
     for name,ticker in items.items():
