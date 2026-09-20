@@ -128,7 +128,18 @@ def extract_uploaded_text(uploaded):
     if suffix=="pdf":
         from pypdf import PdfReader
         return "\n".join((p.extract_text() or "") for p in PdfReader(BytesIO(data)).pages)
-    raise ValueError("僅支援 TXT、MD、CSV、DOCX、PDF")
+    if suffix=="pptx":
+        from pptx import Presentation
+        prs=Presentation(BytesIO(data)); slides=[]
+        for i,slide in enumerate(prs.slides,1):
+            text=[]
+            for shape in slide.shapes:
+                if hasattr(shape,"text") and shape.text.strip():text.append(shape.text.strip())
+                if getattr(shape,"has_table",False):
+                    text.extend("｜".join(cell.text.strip() for cell in row.cells) for row in shape.table.rows)
+            if text:slides.append(f"【第{i}頁】\n"+"\n".join(text))
+        return "\n\n".join(slides)
+    raise ValueError("僅支援 TXT、MD、CSV、DOCX、PDF、PPTX")
 
 def build_technical_report(name,d,news_text=""):
     sections=[]; signals=[]
@@ -179,6 +190,49 @@ def gemini_polish_report(report,api_key):
     text="".join(output).strip()
     if not text:raise ValueError("Gemini 沒有回傳可用文字")
     return text
+
+def gemini_navigation_script(source,api_key,minutes):
+    prompt=(
+        f"你是台灣金融市場研究會議的講稿編輯。請把下列投資導航報告整理成約{minutes}分鐘、可直接口述的繁體中文講稿。"
+        "必須依照原報告章節與市場順序，保留日期、點位、百分比與重要數字；不得杜撰資料、新聞、因果或投資績效。"
+        "講稿需有簡短開場、逐段市場解讀、風險提醒與結論。語氣自然專業，避免逐字朗讀表格，也不要使用空泛口號。"
+        "遇到資料矛盾或無法判斷時，明確寫出需要確認，不可猜測。最後註明僅供市場研究，不構成投資建議。\n\n"
+        "投資導航報告內容：\n"+source
+    )
+    r=requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        headers={"x-goog-api-key":api_key,"Content-Type":"application/json"},
+        json={"model":"gemini-3.8-flash","input":prompt,"store":False},timeout=120
+    )
+    r.raise_for_status(); payload=r.json(); output=[]
+    for step in payload.get("steps",[]):
+        if step.get("type")=="model_output":output.extend(x.get("text","") for x in step.get("content",[]) if x.get("type")=="text")
+    text="".join(output).strip()
+    if not text:raise ValueError("Gemini 沒有回傳可用講稿")
+    return text
+
+def render_navigation_script_generator():
+    st.header("🧭 投資導航報告講稿產生器")
+    st.caption("上傳投資導航報告後，Gemini 會依原報告章節順序整理成可直接口述的講稿，並保留日期與重要數字。")
+    nav_file=st.file_uploader("上傳投資導航報告",type=["pdf","docx","pptx","txt","md","csv"],key="navigation_report_file")
+    minutes=st.selectbox("講稿長度",["3","5","10"],index=1,format_func=lambda x:f"約 {x} 分鐘",key="navigation_minutes")
+    try:saved_nav_key=st.secrets.get("GEMINI_API_KEY","")
+    except Exception:saved_nav_key=""
+    nav_key=st.text_input("Gemini API Key",value=saved_nav_key,type="password",placeholder="貼上 Google AI Studio API Key",key="navigation_gemini_key")
+    if st.button("產生投資導航講稿",type="primary",key="navigation_script_btn"):
+        if nav_file is None:st.warning("請先上傳投資導航報告。")
+        elif not nav_key.strip():st.warning("請先輸入 Gemini API Key。")
+        else:
+            try:
+                with st.spinner("正在讀取報告並產生講稿……"):
+                    source=extract_uploaded_text(nav_file)
+                    if not source.strip():raise ValueError("檔案沒有可辨識的文字內容；若是掃描PDF，請先轉成可搜尋文字的PDF。")
+                    script=gemini_navigation_script(source,nav_key.strip(),minutes)
+                    st.session_state["navigation_script"]=script; st.session_state["navigation_script_edit"]=script
+            except Exception as e:st.error("投資導航講稿產生失敗："+str(e))
+    if "navigation_script" in st.session_state:
+        script=st.text_area("投資導航講稿（可修改或複製）",height=650,key="navigation_script_edit")
+        st.download_button("下載投資導航講稿 TXT",script.encode("utf-8-sig"),f"投資導航講稿_{datetime.now().strftime('%Y%m%d')}.txt","text/plain")
 
 def pptx_market_setup(uploaded):
     if uploaded is None:return DEFAULT_REPORT_ORDER,{}
@@ -397,6 +451,9 @@ def explain(name,x,d=None):
     return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。"
 
 render_ne_asia_generator()
+st.divider()
+
+render_navigation_script_generator()
 st.divider()
 
 st.header("📊 單一指數技術線檢視")
