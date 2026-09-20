@@ -288,17 +288,39 @@ def detailed_technical_section(s):
             f"量能：{s['量能']}。\n"
             f"KD背離：{s['KD背離']}。")
 
+def navigation_context_for_market(text,market):
+    if not text.strip():return ""
+    aliases={
+        "日本":["日本","日經","日圓","日本央行"],"韓國":["韓國","韓股","KOSPI","韓元"],
+        "香港恆生":["香港","恆生","港股"],"上證A股":["中國","上證","A股","人民幣"],
+        "香港國企":["香港國企","國企指數","H股","中國企業指數"],"台灣":["台灣","台股","加權指數","新台幣"],
+    }
+    chunks=[]
+    for raw in text.replace("。","。\n").splitlines():
+        line=" ".join(raw.split()).strip()
+        if len(line)>=4 and any(alias.lower() in line.lower() for alias in aliases.get(market,[market])):chunks.append(line)
+    unique=list(dict.fromkeys(chunks))
+    return "\n".join(unique[:6])[:1800]
+
 def build_all_markets_report(data,navigation_text=""):
     reports=[]
     for item in data:
         w=item["weekly_change"]
+        nav_context=navigation_context_for_market(navigation_text,item["name"])
+        direction="上漲" if w["price_change"]>0 else ("下跌" if w["price_change"]<0 else "持平")
+        if nav_context:
+            cause=(f"【投資導航相關內容】\n{nav_context}\n\n"
+                   f"【本週{direction}原因判斷】\n投資導航報告中的上述內容可作為本週{direction}的市場背景；"
+                   f"技術面顯示{w['summary']}。事件與價格的因果仍需配合公布時間及市場反應確認。")
+        else:
+            cause=(f"【投資導航相關內容】\n未在上傳報告中辨識到明確對應內容。\n\n"
+                   f"【本週{direction}原因判斷】\n提供的資料不足以確認事件原因，目前只能由技術面判斷：{w['technical_reason']}")
         weekly=(f"【一週技術線變化】\n收盤一週變動 {w['price_change']:+.2f}%，"
                 f"K值變動 {w['k_change']:+.1f}、D值變動 {w['d_change']:+.1f}，"
                 f"OSC變動 {w['osc_change']:+.2f}；{w['summary']}。\n"
                 f"【技術面漲跌判斷】\n{w['technical_reason']}")
-        reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"])+"\n\n"+weekly)
+        reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"])+"\n\n"+weekly+"\n\n"+cause)
     result="\n\n"+("\n\n"+("="*28)+"\n\n").join(reports)
-    if navigation_text.strip():result+="\n\n"+("="*28)+"\n\n【投資導航報告內容】\n"+navigation_text.strip()
     return result+"\n\n本報告僅供市場研究，不構成投資建議。"
 
 def weekly_technical_change(d):
