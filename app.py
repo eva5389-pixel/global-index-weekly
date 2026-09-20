@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import requests
 import altair as alt
+from io import BytesIO
 from datetime import datetime
 
 st.set_page_config(page_title="全球指數週動態",page_icon="🌏",layout="wide")
@@ -102,6 +103,54 @@ def tech_summary(label,d):
     momentum="動能偏強" if t["K"]>t["D"] and t["DIF"]>t["MACD"] else ("動能偏弱" if t["K"]<t["D"] and t["DIF"]<t["MACD"] else "動能分歧")
     return t,f"{label}：價格結構{structure}，{momentum}；{t['KD背離']}。"
 
+def extract_uploaded_text(uploaded):
+    if uploaded is None:return ""
+    suffix=uploaded.name.lower().rsplit(".",1)[-1]
+    data=uploaded.getvalue()
+    if suffix in ("txt","md","csv"):
+        for encoding in ("utf-8-sig","utf-8","big5"):
+            try:return data.decode(encoding)
+            except UnicodeDecodeError:continue
+        raise ValueError("文字檔編碼無法辨識")
+    if suffix=="docx":
+        from docx import Document
+        doc=Document(BytesIO(data))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    if suffix=="pdf":
+        from pypdf import PdfReader
+        return "\n".join((p.extract_text() or "") for p in PdfReader(BytesIO(data)).pages)
+    raise ValueError("僅支援 TXT、MD、CSV、DOCX、PDF")
+
+def build_technical_report(name,d,news_text=""):
+    sections=[]; signals=[]
+    frames=[("日線",d),("週線",resample_ohlcv(d,"週線")),("月線",resample_ohlcv(d,"月線"))]
+    for label,frame in frames:
+        if len(frame)<12:continue
+        z,t=technical(frame)
+        last=float(z["收盤"].iloc[-1]); ma5=float(z["收盤"].tail(5).mean())
+        ma20=float(z["收盤"].tail(20).mean()) if len(z)>=20 else float(z["收盤"].mean())
+        structure="偏強" if last>ma5 and last>ma20 else ("偏弱" if last<ma5 and last<ma20 else "震盪")
+        signals.append(structure)
+        sections.append(
+            f"【{label}】\n"
+            f"價格結構：最新收盤 {last:,.2f}，位於短中期均線相對位置呈現{structure}。\n"
+            f"KD：K值 {t['K']:.1f}、D值 {t['D']:.1f}，{t['KD解讀']}。\n"
+            f"MACD：DIF {t['DIF']:.2f}、訊號線 {t['MACD']:.2f}、OSC {t['OSC']:.2f}；{t['MACD解讀']}。\n"
+            f"量能：{t['量能']}。\n"
+            f"KD背離：{t['KD背離']}。"
+        )
+    strong=signals.count("偏強"); weak=signals.count("偏弱")
+    if strong>=2:overall="多數週期的價格結構偏強，但仍要確認量能能否延續，並留意高檔背離。"
+    elif weak>=2:overall="多數週期的價格結構偏弱，反彈是否站回均線與動能翻正，是後續觀察重點。"
+    else:overall="日、週、月訊號不同步，短線與中長線應分開判讀，避免只依單一週期操作。"
+    report=f"{name} 技術線報告\n資料日期：{pd.to_datetime(d['日期'].iloc[-1]).strftime('%Y-%m-%d')}\n\n"+"\n\n".join(sections)
+    report+=f"\n\n【多週期結論】\n{overall}"
+    clean_news=news_text.strip()
+    if clean_news:
+        report+=f"\n\n【新聞與事件補充】\n{clean_news}\n\n【講稿銜接】\n以上新聞作為事件背景，需再對照價格、量能及事件發生時間；目前技術訊號不直接等同於新聞造成的因果關係。"
+    report+="\n\n本報告僅供市場研究，不構成投資建議。"
+    return report
+
 def tech_panel(name,d):
     z,t=technical(d)
     st.subheader(f"📈 {name} 技術線")
@@ -133,6 +182,24 @@ def tech_panel(name,d):
         mm=z.tail(90).melt("日期",value_vars=["DIF","MACD"],var_name="線",value_name="值")
         st.altair_chart(alt.Chart(mm).mark_line().encode(x="日期:T",y="值:Q",color="線:N").properties(height=160),use_container_width=True)
         st.bar_chart(z.tail(90).set_index("日期")["成交量"],height=160)
+    st.markdown("#### 📝 技術線報告產生器")
+    st.caption("講稿依日線 → 週線 → 月線排列，依序說明價格結構、KD、MACD、量能與KD背離。")
+    pasted_news=st.text_area("貼上新聞或事件內容（選填）",height=140,placeholder="可貼入新聞、研究摘要或你想放進講稿的資料……",key=f"news_{name}")
+    uploaded=st.file_uploader("上傳新聞／研究檔案（選填）",type=["txt","md","csv","docx","pdf"],key=f"file_{name}")
+    if st.button("產生技術線報告",type="primary",key=f"report_btn_{name}"):
+        try:
+            file_text=extract_uploaded_text(uploaded)
+            combined="\n\n".join(x for x in (pasted_news.strip(),file_text.strip()) if x)
+            generated=build_technical_report(name,d,combined)
+            st.session_state[f"report_{name}"]=generated
+            st.session_state[f"report_edit_{name}"]=generated
+        except Exception as e:
+            st.error("檔案內容讀取失敗："+str(e))
+    report=st.session_state.get(f"report_{name}")
+    if report:
+        if f"report_edit_{name}" not in st.session_state:st.session_state[f"report_edit_{name}"]=report
+        edited=st.text_area("已產生講稿（可直接修改或複製）",height=520,key=f"report_edit_{name}")
+        st.download_button("下載講稿 TXT",data=edited.encode("utf-8-sig"),file_name=f"{name}_技術線報告_{datetime.now().strftime('%Y%m%d')}.txt",mime="text/plain",key=f"report_download_{name}")
 
 def stats(ticker):
     d=yahoo(ticker)
