@@ -183,4 +183,22 @@ with tab3:
         st.dataframe(pd.DataFrame(cr),use_container_width=True,hide_index=True)
         st.caption("跨資產用來協助理解股市背景；例如美元、殖利率、波動率與商品的同步或背離。")
 
+with tab4:
+    st.subheader("📊 各國估值與企業獲利")
+    st.caption("先架展示版：欄位依 Siblis Research 的 P/E、Forward P/E 與 EPS Index 設計。EPS Index 是獲利指數，不是單一公司的每股盈餘。")
+    valuation_demo=pd.DataFrame([
+        {"市場":"🇹🇼 台灣 TWSE","P/E (TTM)":30.90,"Forward P/E":22.40,"EPS Index (TTM)":167.07,"資料期":"2026/06/30"},
+        {"市場":"🇯🇵 日本 Nikkei 225","P/E (TTM)":22.09,"Forward P/E":17.82,"EPS Index (TTM)":155.43,"資料期":"2026/06/30"},
+        {"市場":"🇰🇷 韓國 KOSPI","P/E (TTM)":22.95,"Forward P/E":7.82,"EPS Index (TTM)":252.73,"資料期":"2026/06/30"},
+    ])
+    st.dataframe(valuation_demo,use_container_width=True,hide_index=True)
+    st.markdown("#### 🔎 怎麼讀")
+    v1,v2,v3=st.columns(3)
+    v1.metric("P/E (TTM)","過去12個月","目前價格 ÷ 過去獲利")
+    v2.metric("Forward P/E","未來預估","市場價格 ÷ 預估獲利")
+    v3.metric("EPS Index","企業獲利趨勢","2024/01/01 = 100")
+    st.info("下一步會把這裡改成自動更新資料，並加入「指數 vs EPS」、「P/E 歷史區間」及估值擴張／收縮判讀；目前展示值不會假裝成即時資料。")
+    st.markdown("**資料來源：** Siblis Research — P/E Ratios by Country")
+    st.link_button("開啟 Siblis Research 原始資料","https://siblisresearch.com/data/pe-ratios-by-country/")
+
 st.caption("最後更新執行："+datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
