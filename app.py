@@ -27,6 +27,37 @@ def yahoo(ticker,range_="3mo"):
     d=pd.DataFrame({"日期":pd.to_datetime(x["timestamp"],unit="s"),"最高":q.get("high"),"最低":q.get("low"),"收盤":q["close"],"成交量":q.get("volume")}).dropna(subset=["收盤"])
     return d
 
+@st.cache_data(ttl=21600)
+def imf_macro_table():
+    """Load the latest available IMF annual data for Taiwan, Japan, Korea and China."""
+    countries={"🇹🇼 台灣":"TWN","🇯🇵 日本":"JPN","🇰🇷 韓國":"KOR","🇨🇳 中國":"CHN"}
+    indicators={"GDP成長率":"NGDP_RPCH","CPI年增率":"PCPIPCH","出口量成長率":"TX_RPCH","進口量成長率":"TM_RPCH"}
+    collected={name:{"國家／市場":name} for name in countries}
+    for label,indicator in indicators.items():
+        url=f"https://www.imf.org/external/datamapper/api/v1/{indicator}"
+        r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
+        values=r.json().get("values",{}).get(indicator,{})
+        for name,code in countries.items():
+            series=values.get(code,{})
+            valid=[]
+            for period,value in series.items():
+                try: valid.append((int(period),float(value)))
+                except (TypeError,ValueError): continue
+            if valid:
+                year,value=max(valid,key=lambda item:item[0])
+                collected[name][label]=value
+                collected[name][f"{label}資料期"]=str(year)
+            else:
+                collected[name][label]=np.nan
+                collected[name][f"{label}資料期"]="待更新"
+    rows=[]
+    for name in countries:
+        item=collected[name]
+        periods=[item.get(f"{label}資料期","待更新") for label in indicators]
+        item["資料期／公布季"]="／".join(dict.fromkeys(periods))+"（年度）"
+        rows.append(item)
+    return pd.DataFrame(rows)
+
 def technical(d):
     z=d.copy()
     low9=z["最低"].rolling(9).min(); high9=z["最高"].rolling(9).max()
@@ -74,7 +105,7 @@ def tech_panel(name,d):
     st.subheader(f"📈 {name} 技術線")
     c1,c2,c3,c4=st.columns(4)
     c1.metric("KD",f"K {t['K']:.1f} / D {t['D']:.1f}"); c2.metric("MACD",f"DIF {t['DIF']:.2f}",f"OSC {t['OSC']:.2f}")
-    c3.metric("量能",t["量能"].split("，")[0]); c4.metric("KD背離","有" if "偵測到" in t["KD背離"] else "無")
+    c3.metric("量能",t["量能"].split("，")[0]); c4.metric("KD背離","無" if t["KD背離"].startswith("未") else "有")
     st.write(f"**KD：** {t['KD解讀']}　｜　**MACD：** {t['MACD解讀']}　｜　**量：** {t['量能']}")
     st.write(f"**背離判讀：** {t['KD背離']}")
     st.markdown("#### 🧭 日／週／月多週期判讀")
@@ -136,7 +167,7 @@ except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
 st.divider()
 
-tab1,tab2,tab3,tab4=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利"])
+tab1,tab2,tab3,tab4,tab5=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口"])
 rows=[]; cache={}
 for region,items in MARKETS.items():
     for name,ticker in items.items():
@@ -190,6 +221,7 @@ with tab4:
         {"市場":"🇹🇼 台灣 TWSE","P/E (TTM)":30.90,"Forward P/E":22.40,"EPS Index (TTM)":167.07,"資料期":"2026/06/30"},
         {"市場":"🇯🇵 日本 Nikkei 225","P/E (TTM)":22.09,"Forward P/E":17.82,"EPS Index (TTM)":155.43,"資料期":"2026/06/30"},
         {"市場":"🇰🇷 韓國 KOSPI","P/E (TTM)":22.95,"Forward P/E":7.82,"EPS Index (TTM)":252.73,"資料期":"2026/06/30"},
+        {"市場":"🇨🇳 中國 A股／MSCI China","P/E (TTM)":"待來源更新","Forward P/E":"待來源更新","EPS Index (TTM)":"待來源更新","資料期":"待更新"},
     ])
     st.dataframe(valuation_demo,use_container_width=True,hide_index=True)
     st.markdown("#### 🔎 怎麼讀")
@@ -200,5 +232,22 @@ with tab4:
     st.info("下一步會把這裡改成自動更新資料，並加入「指數 vs EPS」、「P/E 歷史區間」及估值擴張／收縮判讀；目前展示值不會假裝成即時資料。")
     st.markdown("**資料來源：** Siblis Research — P/E Ratios by Country")
     st.link_button("開啟 Siblis Research 原始資料","https://siblisresearch.com/data/pe-ratios-by-country/")
+
+with tab5:
+    st.subheader("🌏 台日韓中經濟與進出口")
+    st.caption("GDP、CPI、商品與服務進出口量成長率採 IMF DataMapper 最新可用年度資料；最新年度未公布時，自動使用上一期有效值。")
+    try:
+        macro=imf_macro_table()
+        display_cols=["國家／市場","GDP成長率","CPI年增率","出口量成長率","進口量成長率","資料期／公布季"]
+        st.dataframe(macro[display_cols],use_container_width=True,hide_index=True,column_config={
+            "GDP成長率":st.column_config.NumberColumn(format="%.2f%%"),
+            "CPI年增率":st.column_config.NumberColumn(format="%.2f%%"),
+            "出口量成長率":st.column_config.NumberColumn(format="%.2f%%"),
+            "進口量成長率":st.column_config.NumberColumn(format="%.2f%%"),
+        })
+        st.markdown("**資料來源：** IMF DataMapper（WEO）")
+        st.link_button("開啟 IMF DataMapper","https://www.imf.org/external/datamapper/datasets/WEO")
+    except Exception as e:
+        st.warning("IMF 經濟與進出口資料目前無法取得："+str(e))
 
 st.caption("最後更新執行："+datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
