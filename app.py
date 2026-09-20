@@ -285,7 +285,7 @@ def build_barometer_doc(data):
 def render_ne_asia_generator():
     st.header("📑 一鍵產生東北亞會議文件")
     st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；各市場依日線 → 週線 → 月線分析。")
-    tech_file=st.file_uploader("上傳技術線簡報（PPTX，選填）",type=["pptx"],key="ne_asia_tech_pptx")
+    tech_file=st.file_uploader("上傳技術線簡報（PPTX）",type=["pptx"],key="ne_asia_tech_pptx",help="上傳後會優先採用你畫在各張日線、週線、月線圖上的支撐與壓力點位；未上傳時才由行情估算。")
     if st.button("一鍵更新點位並產生會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
         try:
             with st.spinner("正在更新六個市場的最新點位與技術線……"):
