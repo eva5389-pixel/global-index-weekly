@@ -297,10 +297,10 @@ def build_barometer_doc(data):
     format_doc_fonts(doc,11); out=BytesIO(); doc.save(out); return out.getvalue()
 
 def render_ne_asia_generator():
-    st.header("📑 一鍵產生東北亞會議文件")
+    st.header("📑 一鍵產生全部國家技術線報告")
     st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；各市場依日線 → 週線 → 月線分析。")
     tech_file=st.file_uploader("上傳技術線簡報（PPTX）",type=["pptx"],key="ne_asia_tech_pptx",help="上傳後會優先採用你畫在各張日線、週線、月線圖上的支撐與壓力點位；未上傳時才由行情估算。")
-    if st.button("一鍵更新點位並產生會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
+    if st.button("一鍵產生六國技術線報告＋會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
         try:
             with st.spinner("正在更新六個市場的最新點位與技術線……"):
                 order,drawn_levels=pptx_market_setup(tech_file); data=collect_ne_asia_report(order,drawn_levels)
@@ -361,41 +361,6 @@ def tech_panel(name,d):
         mm=z.tail(90).melt("日期",value_vars=["DIF","MACD"],var_name="線",value_name="值")
         st.altair_chart(alt.Chart(mm).mark_line().encode(x="日期:T",y="值:Q",color="線:N").properties(height=160),use_container_width=True)
         st.bar_chart(z.tail(90).set_index("日期")["成交量"],height=160)
-    st.markdown("#### 📝 技術線報告產生器")
-    st.caption("講稿依日線 → 週線 → 月線排列，依序說明價格結構、KD、MACD、量能與KD背離。")
-    pasted_news=st.text_area("貼上新聞或事件內容（選填）",height=140,placeholder="可貼入新聞、研究摘要或你想放進講稿的資料……",key=f"news_{name}")
-    uploaded=st.file_uploader("上傳新聞／研究檔案（選填）",type=["txt","md","csv","docx","pdf"],key=f"file_{name}")
-    if st.button("產生技術線報告",type="primary",key=f"report_btn_{name}"):
-        try:
-            file_text=extract_uploaded_text(uploaded)
-            combined="\n\n".join(x for x in (pasted_news.strip(),file_text.strip()) if x)
-            generated=build_technical_report(name,d,combined)
-            st.session_state[f"report_{name}"]=generated
-            st.session_state[f"report_edit_{name}"]=generated
-        except Exception as e:
-            st.error("檔案內容讀取失敗："+str(e))
-    report=st.session_state.get(f"report_{name}")
-    if report:
-        if f"report_edit_{name}" not in st.session_state:st.session_state[f"report_edit_{name}"]=report
-        edited=st.text_area("已產生講稿（可直接修改或複製）",height=520,key=f"report_edit_{name}")
-        st.markdown("##### ✨ Gemini AI 潤稿")
-        st.caption("Gemini 會整合技術數據與你提供的新聞，但不會把新聞直接假設成漲跌原因。API 金鑰不會寫入 GitHub。")
-        try:saved_key=st.secrets.get("GEMINI_API_KEY","")
-        except Exception:saved_key=""
-        api_key=st.text_input("Gemini API Key",value=saved_key,type="password",placeholder="貼上 Google AI Studio API Key",key=f"gemini_key_{name}")
-        st.link_button("前往 Google AI Studio 取得 API Key","https://aistudio.google.com/apikey")
-        if st.button("使用 Gemini 產生完整講稿",key=f"gemini_btn_{name}"):
-            if not api_key.strip():st.warning("請先輸入 Gemini API Key。")
-            else:
-                try:
-                    with st.spinner("Gemini 正在整理講稿……"):
-                        ai_report=gemini_polish_report(edited,api_key.strip())
-                    st.session_state[f"report_{name}"]=ai_report
-                    st.session_state[f"report_edit_{name}"]=ai_report
-                    st.rerun()
-                except Exception as e:
-                    st.error("Gemini 產生失敗："+str(e))
-        st.download_button("下載講稿 TXT",data=edited.encode("utf-8-sig"),file_name=f"{name}_技術線報告_{datetime.now().strftime('%Y%m%d')}.txt",mime="text/plain",key=f"report_download_{name}")
 
 def stats(ticker):
     d=yahoo(ticker)
@@ -422,7 +387,10 @@ def explain(name,x,d=None):
     direction="上漲" if x["本週%"]>0 else "下跌"
     return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。"
 
-st.header("📊 技術線總覽")
+render_ne_asia_generator()
+st.divider()
+
+st.header("📊 單一指數技術線檢視")
 tech_region=st.selectbox("技術線市場",list(MARKETS),key="tech_region")
 tech_name=st.selectbox("技術線指數",list(MARKETS[tech_region]),key="tech_name")
 try:
@@ -430,9 +398,6 @@ try:
     tech_panel(tech_name,tech_d)
 except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
-st.divider()
-
-render_ne_asia_generator()
 st.divider()
 
 tab1,tab2,tab3,tab4,tab5=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口"])
