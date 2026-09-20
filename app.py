@@ -29,19 +29,21 @@ def yahoo(ticker,range_="3mo"):
 
 @st.cache_data(ttl=21600)
 def imf_macro_table():
-    """Load the latest available IMF annual data for Taiwan, Japan, Korea and China."""
+    """Load IMF WEO data through the DBnomics public mirror."""
     countries={"🇹🇼 台灣":"TWN","🇯🇵 日本":"JPN","🇰🇷 韓國":"KOR","🇨🇳 中國":"CHN"}
     indicators={"GDP成長率":"NGDP_RPCH","CPI年增率":"PCPIPCH","出口量成長率":"TX_RPCH","進口量成長率":"TM_RPCH"}
     collected={name:{"國家／市場":name} for name in countries}
     for label,indicator in indicators.items():
-        url=f"https://www.imf.org/external/datamapper/api/v1/{indicator}"
-        r=requests.get(url,headers=HEADERS,timeout=20); r.raise_for_status()
-        values=r.json().get("values",{}).get(indicator,{})
         for name,code in countries.items():
-            series=values.get(code,{})
+            url=f"https://api.db.nomics.world/v22/series/IMF/WEO:2025-04/{code}.{indicator}"
+            r=requests.get(url,params={"observations":1},headers=HEADERS,timeout=20); r.raise_for_status()
+            docs=r.json().get("series",{}).get("docs",[])
+            series=docs[0] if docs else {}
             valid=[]
-            for period,value in series.items():
-                try: valid.append((int(period),float(value)))
+            for period,value in zip(series.get("period",[]),series.get("value",[])):
+                try:
+                    year=int(period)
+                    if year<=datetime.now().year: valid.append((year,float(value)))
                 except (TypeError,ValueError): continue
             if valid:
                 year,value=max(valid,key=lambda item:item[0])
@@ -235,7 +237,7 @@ with tab4:
 
 with tab5:
     st.subheader("🌏 台日韓中經濟與進出口")
-    st.caption("GDP、CPI、商品與服務進出口量成長率採 IMF DataMapper 最新可用年度資料；最新年度未公布時，自動使用上一期有效值。")
+    st.caption("GDP、CPI、商品與服務進出口量成長率採 IMF WEO 最新可用年度資料（經 DBnomics 公開鏡像讀取）。")
     try:
         macro=imf_macro_table()
         display_cols=["國家／市場","GDP成長率","CPI年增率","出口量成長率","進口量成長率","資料期／公布季"]
@@ -245,7 +247,7 @@ with tab5:
             "出口量成長率":st.column_config.NumberColumn(format="%.2f%%"),
             "進口量成長率":st.column_config.NumberColumn(format="%.2f%%"),
         })
-        st.markdown("**資料來源：** IMF DataMapper（WEO）")
+        st.markdown("**資料來源：** IMF World Economic Outlook（WEO），DBnomics 公開鏡像")
         st.link_button("開啟 IMF DataMapper","https://www.imf.org/external/datamapper/datasets/WEO")
     except Exception as e:
         st.warning("IMF 經濟與進出口資料目前無法取得："+str(e))
