@@ -24,8 +24,54 @@ def yahoo(ticker,range_="3mo"):
     url=f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
     r=requests.get(url,params={"range":range_,"interval":"1d"},headers=HEADERS,timeout=15); r.raise_for_status()
     x=r.json()["chart"]["result"][0]; q=x["indicators"]["quote"][0]
-    d=pd.DataFrame({"日期":pd.to_datetime(x["timestamp"],unit="s"),"收盤":q["close"],"成交量":q.get("volume")}).dropna(subset=["收盤"])
+    d=pd.DataFrame({"日期":pd.to_datetime(x["timestamp"],unit="s"),"最高":q.get("high"),"最低":q.get("low"),"收盤":q["close"],"成交量":q.get("volume")}).dropna(subset=["收盤"])
     return d
+
+def technical(d):
+    z=d.copy()
+    low9=z["最低"].rolling(9).min(); high9=z["最高"].rolling(9).max()
+    rsv=((z["收盤"]-low9)/(high9-low9).replace(0,np.nan)*100).fillna(50)
+    z["K"]=rsv.ewm(alpha=1/3,adjust=False).mean()
+    z["D"]=z["K"].ewm(alpha=1/3,adjust=False).mean()
+    ema12=z["收盤"].ewm(span=12,adjust=False).mean(); ema26=z["收盤"].ewm(span=26,adjust=False).mean()
+    z["DIF"]=ema12-ema26; z["MACD"]=z["DIF"].ewm(span=9,adjust=False).mean(); z["OSC"]=z["DIF"]-z["MACD"]
+    z["VMA5"]=z["成交量"].rolling(5).mean(); z["VMA20"]=z["成交量"].rolling(20).mean()
+    k=float(z["K"].iloc[-1]); dd=float(z["D"].iloc[-1]); dif=float(z["DIF"].iloc[-1]); macd=float(z["MACD"].iloc[-1]); osc=float(z["OSC"].iloc[-1])
+    kd=("高檔" if k>=80 else "低檔" if k<=20 else "中性區")+"；"+("K>D 偏強" if k>dd else "K<D 偏弱")
+    macd_txt=("DIF在訊號線上方" if dif>macd else "DIF在訊號線下方")+"；柱狀體"+("為正" if osc>0 else "為負")
+    v=z["成交量"].iloc[-1]; v20=z["VMA20"].iloc[-1]
+    vol="成交量資料不足" if pd.isna(v) or pd.isna(v20) or v20==0 else f"量能為20日均量的 {v/v20:.2f} 倍，"+("放量" if v/v20>=1.2 else "量縮" if v/v20<=0.8 else "量能一般")
+    # 以最近約60個交易日的局部高/低點，比較價格與K值，判斷規則式KD背離
+    t=z.tail(60).reset_index(drop=True)
+    highs=[]; lows=[]
+    for i in range(2,len(t)-2):
+        if t.loc[i,"收盤"]>=t.loc[i-2:i+2,"收盤"].max(): highs.append(i)
+        if t.loc[i,"收盤"]<=t.loc[i-2:i+2,"收盤"].min(): lows.append(i)
+    div="未偵測到明顯KD背離"
+    if len(highs)>=2:
+        a,b=highs[-2],highs[-1]
+        if t.loc[b,"收盤"]>t.loc[a,"收盤"] and t.loc[b,"K"]<t.loc[a,"K"]: div="⚠️ 偵測到KD頂背離：價格創較高高點，但K值未同步創高"
+    if div.startswith("未") and len(lows)>=2:
+        a,b=lows[-2],lows[-1]
+        if t.loc[b,"收盤"]<t.loc[a,"收盤"] and t.loc[b,"K"]>t.loc[a,"K"]: div="🟢 偵測到KD底背離：價格創較低低點，但K值未同步破低"
+    return z,{"K":k,"D":dd,"KD解讀":kd,"DIF":dif,"MACD":macd,"OSC":osc,"MACD解讀":macd_txt,"量能":vol,"KD背離":div}
+
+def tech_panel(name,d):
+    z,t=technical(d)
+    st.subheader(f"📈 {name} 技術線")
+    c1,c2,c3,c4=st.columns(4)
+    c1.metric("KD",f"K {t['K']:.1f} / D {t['D']:.1f}"); c2.metric("MACD",f"DIF {t['DIF']:.2f}",f"OSC {t['OSC']:.2f}")
+    c3.metric("量能",t["量能"].split("，")[0]); c4.metric("KD背離","有" if "偵測到" in t["KD背離"] else "無")
+    st.write(f"**KD：** {t['KD解讀']}　｜　**MACD：** {t['MACD解讀']}　｜　**量：** {t['量能']}")
+    st.write(f"**背離判讀：** {t['KD背離']}")
+    price=z.tail(90)[["日期","收盤"]]
+    st.altair_chart(alt.Chart(price).mark_line().encode(x="日期:T",y=alt.Y("收盤:Q",scale=alt.Scale(zero=False))).properties(height=180),use_container_width=True)
+    with st.expander("查看 KD / MACD / 成交量圖"):
+        kd=z.tail(90).melt("日期",value_vars=["K","D"],var_name="線",value_name="值")
+        st.altair_chart(alt.Chart(kd).mark_line().encode(x="日期:T",y=alt.Y("值:Q",scale=alt.Scale(domain=[0,100])),color="線:N").properties(height=160),use_container_width=True)
+        mm=z.tail(90).melt("日期",value_vars=["DIF","MACD"],var_name="線",value_name="值")
+        st.altair_chart(alt.Chart(mm).mark_line().encode(x="日期:T",y="值:Q",color="線:N").properties(height=160),use_container_width=True)
+        st.bar_chart(z.tail(90).set_index("日期")["成交量"],height=160)
 
 def stats(ticker):
     d=yahoo(ticker)
@@ -42,6 +88,16 @@ def explain(name,x):
     if not x:return "資料暫缺。"
     direction="上漲" if x["本週%"]>0 else "下跌"
     return f"{name}本週{direction} {abs(x['本週%']):.2f}%，近一月 {x['近1月%']:+.2f}%。目前收盤相對20日均線呈{x['趨勢']}型態。這是價格與均線的技術描述，不代表未來方向。"
+
+st.header("📊 技術線總覽")
+tech_region=st.selectbox("技術線市場",list(MARKETS),key="tech_region")
+tech_name=st.selectbox("技術線指數",list(MARKETS[tech_region]),key="tech_name")
+try:
+    _,tech_d=stats(MARKETS[tech_region][tech_name])
+    tech_panel(tech_name,tech_d)
+except Exception as e:
+    st.warning("技術線資料目前無法取得："+str(e))
+st.divider()
 
 tab1,tab2,tab3=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產"])
 rows=[]; cache={}
