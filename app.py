@@ -151,6 +151,26 @@ def build_technical_report(name,d,news_text=""):
     report+="\n\n本報告僅供市場研究，不構成投資建議。"
     return report
 
+def gemini_polish_report(report,api_key):
+    prompt=(
+        "你是繁體中文市場研究講稿編輯。請把以下技術線報告整理成自然、可直接口述的報告。"
+        "必須維持日線、週線、月線的順序，且每個週期依序涵蓋價格結構、KD、MACD、量能、KD背離。"
+        "新聞只能作為背景，不能虛構因果、數字、來源或未提供的事件；所有原始數值必須保留。"
+        "最後加入多週期結論、觀察重點及『僅供市場研究，不構成投資建議』。\n\n原始報告：\n"+report
+    )
+    r=requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/interactions",
+        headers={"x-goog-api-key":api_key,"Content-Type":"application/json"},
+        json={"model":"gemini-3.8-flash","input":prompt,"store":False},timeout=90
+    )
+    r.raise_for_status(); payload=r.json(); output=[]
+    for step in payload.get("steps",[]):
+        if step.get("type")=="model_output":
+            output.extend(x.get("text","") for x in step.get("content",[]) if x.get("type")=="text")
+    text="".join(output).strip()
+    if not text:raise ValueError("Gemini 沒有回傳可用文字")
+    return text
+
 def tech_panel(name,d):
     z,t=technical(d)
     st.subheader(f"📈 {name} 技術線")
@@ -199,6 +219,23 @@ def tech_panel(name,d):
     if report:
         if f"report_edit_{name}" not in st.session_state:st.session_state[f"report_edit_{name}"]=report
         edited=st.text_area("已產生講稿（可直接修改或複製）",height=520,key=f"report_edit_{name}")
+        st.markdown("##### ✨ Gemini AI 潤稿")
+        st.caption("Gemini 會整合技術數據與你提供的新聞，但不會把新聞直接假設成漲跌原因。API 金鑰不會寫入 GitHub。")
+        try:saved_key=st.secrets.get("GEMINI_API_KEY","")
+        except Exception:saved_key=""
+        api_key=st.text_input("Gemini API Key",value=saved_key,type="password",placeholder="貼上 Google AI Studio API Key",key=f"gemini_key_{name}")
+        st.link_button("前往 Google AI Studio 取得 API Key","https://aistudio.google.com/apikey")
+        if st.button("使用 Gemini 產生完整講稿",key=f"gemini_btn_{name}"):
+            if not api_key.strip():st.warning("請先輸入 Gemini API Key。")
+            else:
+                try:
+                    with st.spinner("Gemini 正在整理講稿……"):
+                        ai_report=gemini_polish_report(edited,api_key.strip())
+                    st.session_state[f"report_{name}"]=ai_report
+                    st.session_state[f"report_edit_{name}"]=ai_report
+                    st.rerun()
+                except Exception as e:
+                    st.error("Gemini 產生失敗："+str(e))
         st.download_button("下載講稿 TXT",data=edited.encode("utf-8-sig"),file_name=f"{name}_技術線報告_{datetime.now().strftime('%Y%m%d')}.txt",mime="text/plain",key=f"report_download_{name}")
 
 def stats(ticker):
