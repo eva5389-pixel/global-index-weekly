@@ -56,6 +56,19 @@ def technical(d):
         if t.loc[b,"收盤"]<t.loc[a,"收盤"] and t.loc[b,"K"]>t.loc[a,"K"]: div="🟢 偵測到KD底背離：價格創較低低點，但K值未同步破低"
     return z,{"K":k,"D":dd,"KD解讀":kd,"DIF":dif,"MACD":macd,"OSC":osc,"MACD解讀":macd_txt,"量能":vol,"KD背離":div}
 
+def resample_ohlcv(d,period):
+    z=d.copy().set_index("日期")
+    rule="W-FRI" if period=="週線" else "ME"
+    return z.resample(rule).agg({"最高":"max","最低":"min","收盤":"last","成交量":"sum"}).dropna(subset=["收盤"]).reset_index()
+
+def tech_summary(label,d):
+    z,t=technical(d)
+    last=float(z["收盤"].iloc[-1]); ma5=float(z["收盤"].tail(5).mean())
+    ma20=float(z["收盤"].tail(20).mean()) if len(z)>=20 else float(z["收盤"].mean())
+    structure="偏強" if last>ma5 and last>ma20 else ("偏弱" if last<ma5 and last<ma20 else "震盪")
+    momentum="動能偏強" if t["K"]>t["D"] and t["DIF"]>t["MACD"] else ("動能偏弱" if t["K"]<t["D"] and t["DIF"]<t["MACD"] else "動能分歧")
+    return t,f"{label}：價格結構{structure}，{momentum}；{t['KD背離']}。"
+
 def tech_panel(name,d):
     z,t=technical(d)
     st.subheader(f"📈 {name} 技術線")
@@ -64,6 +77,21 @@ def tech_panel(name,d):
     c3.metric("量能",t["量能"].split("，")[0]); c4.metric("KD背離","有" if "偵測到" in t["KD背離"] else "無")
     st.write(f"**KD：** {t['KD解讀']}　｜　**MACD：** {t['MACD解讀']}　｜　**量：** {t['量能']}")
     st.write(f"**背離判讀：** {t['KD背離']}")
+    st.markdown("#### 🧭 日／週／月多週期判讀")
+    frames=[("日線",d),("週線",resample_ohlcv(d,"週線")),("月線",resample_ohlcv(d,"月線"))]
+    multi=[]
+    for label,frame in frames:
+        if len(frame)>=12:
+            tt,summary=tech_summary(label,frame)
+            multi.append({"週期":label,"K":tt["K"],"D":tt["D"],"OSC":tt["OSC"],"KD背離":tt["KD背離"],"解讀":summary})
+    if multi:
+        md=pd.DataFrame(multi)
+        st.dataframe(md,use_container_width=True,hide_index=True,column_config={"K":st.column_config.NumberColumn(format="%.1f"),"D":st.column_config.NumberColumn(format="%.1f"),"OSC":st.column_config.NumberColumn(format="%.2f")})
+        strong=sum(("偏強" in x["解讀"]) for x in multi); weak=sum(("偏弱" in x["解讀"]) for x in multi)
+        if strong>=2: overall="日、週、月多週期目前以偏強訊號較多，但仍需觀察量能與背離是否惡化。"
+        elif weak>=2: overall="日、週、月多週期目前以偏弱訊號較多，需留意短線反彈是否能扭轉中期動能。"
+        else: overall="日、週、月訊號目前分歧，屬多週期不同步，較適合分開看短線與中長線。"
+        st.info("**多週期結論：** "+overall)
     price=z.tail(90)[["日期","收盤"]]
     st.altair_chart(alt.Chart(price).mark_line().encode(x="日期:T",y=alt.Y("收盤:Q",scale=alt.Scale(zero=False))).properties(height=180),use_container_width=True)
     with st.expander("查看 KD / MACD / 成交量圖"):
