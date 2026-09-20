@@ -19,6 +19,15 @@ MARKETS={
 "🇺🇸 美國":{"S&P 500":"^GSPC","Nasdaq":"^IXIC","費城半導體":"^SOX","Russell 2000":"^RUT"},
 "🇪🇺 歐洲":{"STOXX Europe 600":"^STOXX","DAX":"^GDAXI","CAC 40":"^FCHI","FTSE 100":"^FTSE"}}
 CROSS={"美元指數":"DX-Y.NYB","美債10Y殖利率":"^TNX","VIX":"^VIX","黃金":"GC=F","原油WTI":"CL=F","Bitcoin":"BTC-USD"}
+NE_ASIA_REPORT={
+"日本":{"顯示":"日經225指數","ticker":"^N225"},
+"韓國":{"顯示":"韓國指數","ticker":"^KS11"},
+"香港恆生":{"顯示":"香港恆生指數","ticker":"^HSI"},
+"上證A股":{"顯示":"中國上證A股指數","ticker":"000001.SS"},
+"香港國企":{"顯示":"香港國企指數","ticker":"^HSCE"},
+"台灣":{"顯示":"台灣加權指數","ticker":"^TWII"},
+}
+DEFAULT_REPORT_ORDER=list(NE_ASIA_REPORT)
 
 @st.cache_data(ttl=900)
 def yahoo(ticker,range_="3mo"):
@@ -171,6 +180,93 @@ def gemini_polish_report(report,api_key):
     if not text:raise ValueError("Gemini 沒有回傳可用文字")
     return text
 
+def pptx_market_order(uploaded):
+    if uploaded is None:return DEFAULT_REPORT_ORDER
+    from pptx import Presentation
+    prs=Presentation(BytesIO(uploaded.getvalue())); found=[]
+    aliases={"日經":"日本","韓股":"韓國","韓國":"韓國","香港恆生":"香港恆生","上證":"上證A股","上証":"上證A股","香港國企":"香港國企","台灣加權":"台灣"}
+    for slide in prs.slides:
+        text="\n".join(sh.text for sh in slide.shapes if hasattr(sh,"text"))
+        for alias,name in aliases.items():
+            if alias in text and name not in found:found.append(name)
+    return found+[x for x in DEFAULT_REPORT_ORDER if x not in found]
+
+def timeframe_snapshot(d,label):
+    frame=d if label=="日線" else resample_ohlcv(d,label)
+    z,t=technical(frame); window=20 if label!="月線" else 12; recent=z.tail(window)
+    last=float(z["收盤"].iloc[-1]); support=float(recent["最低"].min()); resistance=float(recent["最高"].max())
+    ma5=float(z["收盤"].tail(5).mean()); ma20=float(z["收盤"].tail(20).mean()) if len(z)>=20 else float(z["收盤"].mean())
+    structure="偏強" if last>ma5 and last>ma20 else ("偏弱" if last<ma5 and last<ma20 else "震盪")
+    return {"label":label,"last":last,"support":support,"resistance":resistance,"structure":structure,**t}
+
+def fmt_level(value):return f"{value:,.0f}"
+
+def meeting_sentence(s):
+    return (f"{s['label']}：最新 {fmt_level(s['last'])} 點，價格結構{s['structure']}。"
+            f"KD為K {s['K']:.1f}、D {s['D']:.1f}，{s['KD解讀']}；MACD為DIF {s['DIF']:.2f}、OSC {s['OSC']:.2f}，{s['MACD解讀']}；"
+            f"{s['量能']}；{s['KD背離']}。支撐 {fmt_level(s['support'])} 點、壓力 {fmt_level(s['resistance'])} 點。")
+
+def collect_ne_asia_report(order):
+    output=[]
+    for name in order:
+        info=NE_ASIA_REPORT[name]; d=yahoo(info["ticker"],"2y")
+        output.append({"name":name,"display":info["顯示"],"date":pd.to_datetime(d["日期"].iloc[-1]).date(),"frames":[timeframe_snapshot(d,x) for x in ("日線","週線","月線")]})
+    return output
+
+def style_report_doc(doc):
+    from docx.shared import Pt
+    style=doc.styles["Normal"]; style.font.name="Microsoft JhengHei"; style.font.size=Pt(10.5)
+    for section in doc.sections:
+        section.top_margin=section.bottom_margin=Pt(42); section.left_margin=section.right_margin=Pt(42)
+
+def build_meeting_doc(data):
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+    doc=Document(); style_report_doc(doc); now=datetime.now(); roc=now.year-1911
+    p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER; r=p.add_run(f"{roc}/{now.month}/{now.day} 東北亞市場會議記錄"); r.bold=True; r.font.size=Pt(16)
+    doc.add_paragraph("亞洲地區：")
+    table=doc.add_table(rows=1,cols=2); table.style="Table Grid"; table.rows[0].cells[0].text="國別"; table.rows[0].cells[1].text="最新點位與技術線型分析"
+    for item in data:
+        cells=table.add_row().cells; cells[0].text=item["name"]; cells[1].text="\n".join(meeting_sentence(x) for x in item["frames"])
+    out=BytesIO(); doc.save(out); return out.getvalue()
+
+def build_barometer_doc(data):
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+    doc=Document(); style_report_doc(doc); p=doc.add_paragraph(); p.alignment=WD_ALIGN_PARAGRAPH.CENTER
+    r=p.add_run("本週重點市場指數預測"); r.bold=True; r.font.size=Pt(16); doc.add_paragraph("評等：部分加碼／持有／部分減碼")
+    table=doc.add_table(rows=1,cols=5); table.style="Table Grid"
+    for cell,text in zip(table.rows[0].cells,["市場（指數）","最新點位","本週走勢預測","建議","短線壓力／支撐"]):cell.text=text
+    for item in data:
+        daily,weekly,_=item["frames"]
+        if daily["structure"]==weekly["structure"]=="偏強":forecast,action="整理偏強","部分加碼"
+        elif daily["structure"]==weekly["structure"]=="偏弱":forecast,action="整理偏弱","部分減碼"
+        else:forecast,action="區間整理","持有"
+        cells=table.add_row().cells
+        values=[item["display"],fmt_level(daily["last"]),forecast,action,f"支撐 {fmt_level(daily['support'])}、壓力 {fmt_level(daily['resistance'])}"]
+        for cell,value in zip(cells,values):cell.text=value
+    doc.add_paragraph("資料日期："+"；".join(f"{x['name']} {x['date']}" for x in data))
+    out=BytesIO(); doc.save(out); return out.getvalue()
+
+def render_ne_asia_generator():
+    st.header("📑 一鍵產生東北亞會議文件")
+    st.caption("固定順序：日本 → 韓國 → 香港恆生 → 上證A股 → 香港國企 → 台灣；各市場依日線 → 週線 → 月線分析。")
+    tech_file=st.file_uploader("上傳技術線簡報（PPTX，選填）",type=["pptx"],key="ne_asia_tech_pptx")
+    if st.button("一鍵更新點位並產生會議記錄＋晴雨表",type="primary",key="make_ne_asia_docs"):
+        try:
+            with st.spinner("正在更新六個市場的最新點位與技術線……"):
+                order=pptx_market_order(tech_file); data=collect_ne_asia_report(order)
+                st.session_state["ne_meeting_doc"]=build_meeting_doc(data); st.session_state["ne_barometer_doc"]=build_barometer_doc(data)
+                st.session_state["ne_preview"]=pd.DataFrame([{"順序":i+1,"市場":x["name"],"最新點位":x["frames"][0]["last"],"日線支撐":x["frames"][0]["support"],"日線壓力":x["frames"][0]["resistance"],"資料日期":x["date"]} for i,x in enumerate(data)])
+        except Exception as e:st.error("文件產生失敗："+str(e))
+    if "ne_preview" in st.session_state:
+        st.dataframe(st.session_state["ne_preview"],use_container_width=True,hide_index=True,column_config={"最新點位":st.column_config.NumberColumn(format="%.0f"),"日線支撐":st.column_config.NumberColumn(format="%.0f"),"日線壓力":st.column_config.NumberColumn(format="%.0f")})
+        c1,c2=st.columns(2); stamp=datetime.now().strftime("%Y%m%d")
+        c1.download_button("下載更新後會議記錄 DOCX",st.session_state["ne_meeting_doc"],f"會議記錄_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        c2.download_button("下載更新後晴雨表 DOCX",st.session_state["ne_barometer_doc"],f"晴雨表_{stamp}_東北亞.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
 def tech_panel(name,d):
     z,t=technical(d)
     st.subheader(f"📈 {name} 技術線")
@@ -271,6 +367,9 @@ try:
     tech_panel(tech_name,tech_d)
 except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
+st.divider()
+
+render_ne_asia_generator()
 st.divider()
 
 tab1,tab2,tab3,tab4,tab5=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口"])
