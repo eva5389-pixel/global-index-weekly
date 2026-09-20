@@ -177,6 +177,9 @@ def gemini_polish_report(report,api_key):
         "你是繁體中文市場研究講稿編輯。請把以下六國技術線、一週技術變化與投資導航內容整合成自然、可直接口述的報告。"
         "必須維持原始國家順序，以及每國日線、週線、月線的順序；每個週期依序涵蓋價格結構、KD、MACD、量能、KD背離。"
         "每個國家接著說明一週價格變化與技術動能變化，再把投資導航內容放入相關市場段落；無法歸類的內容放在最後的市場重點。"
+        "每個國家都要新增『本週為何上漲』或『本週為何下跌』段落。先引用投資導航報告中能支持的政策、經濟數據、產業、企業獲利、匯率或資金因素，"
+        "再說明技術動能是否配合。必須區分已知事實、合理推論與純技術面解讀；不得只因事件與漲跌同時發生就斷言因果。"
+        "若投資導航內容沒有足夠證據，請明確寫『提供的資料不足以確認事件原因，目前只能由技術面判斷』，再說明價格、KD與MACD的變化。"
         "新聞只能作為背景，不能虛構因果、數字、來源或未提供的事件；所有原始數值必須保留。"
         "最後加入多週期結論、觀察重點及『僅供市場研究，不構成投資建議』。\n\n原始報告：\n"+report
     )
@@ -291,7 +294,8 @@ def build_all_markets_report(data,navigation_text=""):
         w=item["weekly_change"]
         weekly=(f"【一週技術線變化】\n收盤一週變動 {w['price_change']:+.2f}%，"
                 f"K值變動 {w['k_change']:+.1f}、D值變動 {w['d_change']:+.1f}，"
-                f"OSC變動 {w['osc_change']:+.2f}；{w['summary']}。")
+                f"OSC變動 {w['osc_change']:+.2f}；{w['summary']}。\n"
+                f"【技術面漲跌判斷】\n{w['technical_reason']}")
         reports.append(f"{item['display']} 技術線報告\n資料日期：{item['date']}\n\n"+"\n\n".join(detailed_technical_section(x) for x in item["frames"])+"\n\n"+weekly)
     result="\n\n"+("\n\n"+("="*28)+"\n\n").join(reports)
     if navigation_text.strip():result+="\n\n"+("="*28)+"\n\n【投資導航報告內容】\n"+navigation_text.strip()
@@ -304,7 +308,12 @@ def weekly_technical_change(d):
     if price_change>0 and k_change>0 and osc_change>0:summary="價格與技術動能同步轉強"
     elif price_change<0 and k_change<0 and osc_change<0:summary="價格與技術動能同步轉弱"
     else:summary="價格與技術動能不同步，訊號分歧"
-    return {"price_change":price_change,"k_change":k_change,"d_change":d_change,"osc_change":osc_change,"summary":summary}
+    if price_change>0 and k_change>0 and osc_change>0:reason="本週上漲獲得KD與MACD動能改善支持，技術面屬於價漲動能增強。事件面的原因仍需對照投資導航內容。"
+    elif price_change>0:reason="本週雖然上漲，但KD或MACD未同步增強，可能屬反彈或動能落後；事件面的原因仍需對照投資導航內容。"
+    elif price_change<0 and k_change<0 and osc_change<0:reason="本週下跌伴隨KD與MACD動能轉弱，技術面賣壓較明確。事件面的原因仍需對照投資導航內容。"
+    elif price_change<0:reason="本週雖然下跌，但部分動能指標未同步惡化，可能屬震盪修正；事件面的原因仍需對照投資導航內容。"
+    else:reason="本週價格變化有限，技術面以整理為主；事件面的原因仍需對照投資導航內容。"
+    return {"price_change":price_change,"k_change":k_change,"d_change":d_change,"osc_change":osc_change,"summary":summary,"technical_reason":reason}
 
 def collect_ne_asia_report(order,drawn_levels=None):
     drawn_levels=drawn_levels or {}
