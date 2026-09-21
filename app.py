@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
+import time
 import altair as alt
 import hashlib
 from io import BytesIO
@@ -172,6 +173,55 @@ def build_technical_report(name,d,news_text=""):
     report+="\n\n本報告僅供市場研究，不構成投資建議。"
     return report
 
+def _gemini_text(prompt,api_key,timeout=120):
+    """Call Gemini with retries, then fall back to generateContent."""
+    headers={"x-goog-api-key":api_key,"Content-Type":"application/json"}
+    interaction_url="https://generativelanguage.googleapis.com/v1beta/interactions"
+    last_error=None
+    for attempt in range(3):
+        try:
+            r=requests.post(
+                interaction_url,headers=headers,
+                json={"model":"gemini-3.8-flash","input":prompt,"store":False},timeout=timeout
+            )
+            if r.status_code not in (429,500,502,503,504):
+                r.raise_for_status()
+            elif attempt<2:
+                time.sleep(2**attempt);continue
+            else:r.raise_for_status()
+            payload=r.json();output=[]
+            for step in payload.get("steps",[]):
+                if step.get("type")=="model_output":
+                    output.extend(x.get("text","") for x in step.get("content",[]) if x.get("type")=="text")
+            text="".join(output).strip()
+            if text:return text
+            last_error=ValueError("Gemini 沒有回傳可用文字")
+        except requests.RequestException as exc:
+            last_error=exc
+            if attempt<2:time.sleep(2**attempt)
+
+    # The stateless generateContent endpoint is a reliable fallback for this one-shot task.
+    fallback_url="https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent"
+    try:
+        r=requests.post(
+            fallback_url,headers=headers,
+            json={"contents":[{"role":"user","parts":[{"text":prompt}]}]},timeout=timeout
+        )
+        r.raise_for_status();payload=r.json()
+        text="".join(
+            part.get("text","")
+            for candidate in payload.get("candidates",[])
+            for part in candidate.get("content",{}).get("parts",[])
+        ).strip()
+        if text:return text
+    except requests.RequestException as exc:last_error=exc
+    if isinstance(last_error,requests.HTTPError) and last_error.response is not None:
+        code=last_error.response.status_code
+        if code==401 or code==403:raise ValueError("API Key 無效、未啟用 Gemini API，或金鑰受到權限限制。")
+        if code==429:raise ValueError("Gemini 使用額度或請求頻率已達上限，請稍後再試。")
+        if code in (500,502,503,504):raise ValueError("Google Gemini 服務暫時忙碌；系統已自動重試，請稍後再按一次。")
+    raise ValueError(f"Gemini 連線失敗：{last_error}")
+
 def gemini_polish_report(report,api_key):
     prompt=(
         "你是繁體中文市場研究講稿編輯。請把以下六國技術線、一週技術變化與投資導航內容整合成自然、可直接口述的報告。"
@@ -183,18 +233,7 @@ def gemini_polish_report(report,api_key):
         "新聞只能作為背景，不能虛構因果、數字、來源或未提供的事件；所有原始數值必須保留。"
         "最後加入多週期結論、觀察重點及『僅供市場研究，不構成投資建議』。\n\n原始報告：\n"+report
     )
-    r=requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
-        headers={"x-goog-api-key":api_key,"Content-Type":"application/json"},
-        json={"model":"gemini-3.8-flash","input":prompt,"store":False},timeout=90
-    )
-    r.raise_for_status(); payload=r.json(); output=[]
-    for step in payload.get("steps",[]):
-        if step.get("type")=="model_output":
-            output.extend(x.get("text","") for x in step.get("content",[]) if x.get("type")=="text")
-    text="".join(output).strip()
-    if not text:raise ValueError("Gemini 沒有回傳可用文字")
-    return text
+    return _gemini_text(prompt,api_key,timeout=120)
 
 def gemini_navigation_script(source,api_key,minutes):
     prompt=(
@@ -204,17 +243,7 @@ def gemini_navigation_script(source,api_key,minutes):
         "遇到資料矛盾或無法判斷時，明確寫出需要確認，不可猜測。最後註明僅供市場研究，不構成投資建議。\n\n"
         "投資導航報告內容：\n"+source
     )
-    r=requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
-        headers={"x-goog-api-key":api_key,"Content-Type":"application/json"},
-        json={"model":"gemini-3.8-flash","input":prompt,"store":False},timeout=120
-    )
-    r.raise_for_status(); payload=r.json(); output=[]
-    for step in payload.get("steps",[]):
-        if step.get("type")=="model_output":output.extend(x.get("text","") for x in step.get("content",[]) if x.get("type")=="text")
-    text="".join(output).strip()
-    if not text:raise ValueError("Gemini 沒有回傳可用講稿")
-    return text
+    return _gemini_text(prompt,api_key,timeout=150)
 
 def render_navigation_script_generator():
     st.header("🧭 投資導航報告講稿產生器")
