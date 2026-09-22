@@ -43,9 +43,15 @@ def capture_charts(selected, progress=None):
         try:
             page = browser.new_page(viewport={"width": 1600, "height": 1100}, device_scale_factor=1)
             for name, url in selected:
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                response = page.goto(url, wait_until="domcontentloaded", timeout=45000)
                 panel = page.locator(".technical-charts")
-                panel.locator("svg.highcharts-root").wait_for(state="visible", timeout=35000)
+                try:
+                    panel.locator("svg.highcharts-root").wait_for(state="visible", timeout=35000)
+                except Exception as exc:
+                    title = page.title()
+                    text = page.locator("body").inner_text(timeout=5000)[:240].replace("\n", " ")
+                    status = response.status if response else "無回應"
+                    raise RuntimeError(f"{name} 圖表沒有載入（HTTP {status}，頁面：{title}；{text}）") from exc
                 # The supplied sample shows the default four indicators in this order.
                 selects = page.locator(".technical-wrap select")
                 for index, label in enumerate(("K線及均線", "成交量", "KD", "MACD")):
