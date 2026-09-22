@@ -2,10 +2,11 @@
 from datetime import date, timedelta
 from io import BytesIO
 from pathlib import Path
+from base64 import b64decode
 
 import streamlit as st
 
-BACKGROUND = Path(__file__).with_name("weekly_report_background.png")
+BACKGROUND = Path(__file__).with_name("weekly_report_background.b64")
 FONT = "標楷體"
 
 
@@ -76,7 +77,8 @@ def report_pptx(start, end, overview, sections):
 
     def new_slide(title, cover=False):
         slide = prs.slides.add_slide(blank)
-        slide.shapes.add_picture(str(BACKGROUND), 0, 0, width=prs.slide_width, height=prs.slide_height)
+        slide.shapes.add_picture(BytesIO(b64decode(BACKGROUND.read_text())), 0, 0,
+                                 width=prs.slide_width, height=prs.slide_height)
         # Mask the fixed label in the supplied image; retain the logo and footer.
         if cover:
             textbox(slide, title, 1.45, 2.18, 7.1, 1.35, center=True, fill=(237, 246, 255))
