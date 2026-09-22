@@ -49,6 +49,7 @@ def report_pptx(start, end, overview, sections):
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
     blank = prs.slide_layouts[6]
+    background_image = b64decode(BACKGROUND.read_text())
 
     def textbox(slide, content, x, y, w, h, *, center=False, fill=None):
         if fill is not None:
@@ -77,7 +78,7 @@ def report_pptx(start, end, overview, sections):
 
     def new_slide(title, cover=False):
         slide = prs.slides.add_slide(blank)
-        slide.shapes.add_picture(BytesIO(b64decode(BACKGROUND.read_text())), 0, 0,
+        slide.shapes.add_picture(BytesIO(background_image), 0, 0,
                                  width=prs.slide_width, height=prs.slide_height)
         # Mask the fixed label in the supplied image; retain the logo and footer.
         if cover:
@@ -148,6 +149,13 @@ def render_weekly_report(cache, markets):
     c1.download_button("下載 Word 報告", report_docx(start, end, overview, sections),
                        file_name=f"每週市場報告_{start:%Y%m%d}.docx",
                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    c2.download_button("下載 PPT 簡報", report_pptx(start, end, overview, sections),
-                       file_name=f"每週市場報告_{start:%Y%m%d}.pptx",
-                       mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    if BACKGROUND.is_file():
+        try:
+            ppt_data = report_pptx(start, end, overview, sections)
+            c2.download_button("下載 PPT 簡報", ppt_data,
+                               file_name=f"每週市場報告_{start:%Y%m%d}.pptx",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        except (OSError, ValueError) as exc:
+            c2.warning(f"PPT 背景檔讀取失敗：{exc}")
+    else:
+        c2.warning("PPT 背景檔尚未就緒，請稍後重新整理；Word 報告仍可下載。")
