@@ -3,6 +3,7 @@ from base64 import b64decode
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile, BadZipFile
 
 import streamlit as st
 
@@ -97,24 +98,57 @@ def charts_from_pptx(data):
     return images
 
 
+def charts_from_zip(data):
+    """Read the numbered PNGs produced by the local screenshot helper."""
+    if len(data) > 90_000_000:
+        raise ValueError("ZIP 超過 90 MB；請縮小截圖後再上傳。")
+    images = {}
+    try:
+        with ZipFile(BytesIO(data)) as source:
+            for index, (name, _) in enumerate(MARKETS):
+                for period_index, (period, _) in enumerate(PERIODS):
+                    filename = f"{index * 3 + period_index + 1:02d}.png"
+                    item = source.getinfo(filename)
+                    if item.file_size > 8_000_000:
+                        raise ValueError(f"{filename} 超過 8 MB。")
+                    image = source.read(filename)
+                    if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+                        raise ValueError(f"{filename} 不是 PNG 圖片。")
+                    images[(name, period)] = image
+    except (KeyError, BadZipFile) as exc:
+        raise ValueError("ZIP 需包含依順序命名的 01.png 至 18.png。") from exc
+    return images
+
+
 def render_wantgoo_capture():
     st.header("📸 玩股網技術線截圖")
     st.caption("順序：日經 → 韓股 → 恆生 → 上證A股 → 香港國企 → 台灣；各市場日線 → 週線 → 月線。圖表保留均線、成交量、KD、MACD，套用合庫背景與範例的圖片位置。")
-    st.warning("玩股網目前對 Streamlit Cloud 的自動截圖顯示安全驗證，無法從網站伺服器直接擷取。請上傳你在玩股網更新過的技術線 PPT；系統會依原頁序抽出圖表並套用新背景。")
-    uploaded = st.file_uploader("上傳技術線 PPTX（封面＋亞洲頁＋18 張圖）", type=["pptx"], key="wantgoo_source_pptx")
-    if st.button("套用新背景並製作 PPT", type="primary", key="capture_wantgoo", disabled=uploaded is None):
+    st.info("本機截圖小工具：在你的 Mac 上開啟玩股網，親自完成驗證後，由程式依順序擷取 18 張圖；遇到無法切換週期或再次驗證時會暫停讓你操作。完成後將 ZIP 上傳此頁製作 PPT。")
+    with st.expander("① 下載與使用 Mac 截圖小工具", expanded=True):
+        helper = Path(__file__).with_name("wantgoo_local_capture.py").read_bytes()
+        st.download_button("下載 Mac 截圖小工具（Python）", helper, "wantgoo_local_capture.py", "text/x-python", key="download_capture_helper")
+        st.markdown("1. 在 Mac 的「終端機」依序執行 `python3 -m pip install playwright` 與 `python3 -m playwright install chromium`。\n"
+                    "2. 執行 `python3 ~/Downloads/wantgoo_local_capture.py`。\n"
+                    "3. 在新開的瀏覽器完成玩股網驗證，回終端機按 Enter；拖曳框選包含 KD、MACD、量能的圖表範圍。\n"
+                    "4. 程式依日本→韓國→恆生→上證A股→香港國企→台灣，各自日／週／月線擷取。若需驗證或手動選週期，按提示操作。\n"
+                    "5. 在「下載項目」找到產生的 ZIP，上傳到下面。")
+        st.caption("截圖在你的電腦執行；不會要求你把驗證資料、密碼或瀏覽器 Cookie 上傳到網站。圖表請以畫面核對後使用。")
+    uploaded_zip = st.file_uploader("② 上傳本機截圖 ZIP（01.png～18.png）", type=["zip"], key="wantgoo_capture_zip")
+    uploaded = st.file_uploader("或上傳原技術線 PPTX（封面＋亞洲頁＋18 張圖）", type=["pptx"], key="wantgoo_source_pptx")
+    selected_file = uploaded_zip or uploaded
+    if st.button("套用新背景並製作 PPT", type="primary", key="capture_wantgoo", disabled=selected_file is None):
         try:
-            images = charts_from_pptx(uploaded.getvalue())
+            images = charts_from_zip(uploaded_zip.getvalue()) if uploaded_zip else charts_from_pptx(uploaded.getvalue())
             captured_at = datetime.now()
             st.session_state["wantgoo_deck"] = build_chart_pptx(images, MARKETS, captured_at)
             st.session_state["wantgoo_images"] = images
             st.session_state["wantgoo_captured_at"] = captured_at
-            st.session_state["wantgoo_selection"] = uploaded.name
+            st.session_state["wantgoo_selection"] = selected_file.name
         except Exception as exc:
             st.error(f"簡報處理失敗：{exc}")
-    if uploaded and st.session_state.get("wantgoo_deck") and st.session_state.get("wantgoo_selection") == uploaded.name:
+    if selected_file and st.session_state.get("wantgoo_deck") and st.session_state.get("wantgoo_selection") == selected_file.name:
         captured_at = st.session_state["wantgoo_captured_at"]
-        st.success(f"已匯入 {len(st.session_state['wantgoo_images'])} 張圖表。圖表日期以原簡報為準；{captured_at:%Y/%m/%d %H:%M} 為製作時間。")
+        st.success(f"已匯入 {len(st.session_state['wantgoo_images'])} 張圖表。請核對每張圖的市場、週期與資料日期；{captured_at:%Y/%m/%d %H:%M} 為製作時間。")
         st.download_button("下載玩股網技術線 PPT", st.session_state["wantgoo_deck"],
                            file_name=f"玩股網技術線_{captured_at:%Y%m%d_%H%M}.pptx",
                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
