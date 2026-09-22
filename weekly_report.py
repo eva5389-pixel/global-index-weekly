@@ -10,6 +10,22 @@ BACKGROUND = Path(__file__).with_name("weekly_report_background.b64")
 FONT = "標楷體"
 
 
+def meeting_text_from_docx(data):
+    """Read the generated meeting record, including its market analysis table."""
+    if not data:
+        return ""
+    from docx import Document
+
+    doc = Document(BytesIO(data))
+    lines = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows[1:]:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                lines.append("｜".join(cells))
+    return "\n".join(lines)
+
+
 def report_docx(start, end, overview, sections):
     from docx import Document
     from docx.shared import Cm, Pt
@@ -129,19 +145,37 @@ def render_weekly_report(cache, markets):
     overview = st.text_area("本週重點摘要（可編輯）", placeholder="例如：主要市場走勢、政策與產業事件，以及下週觀察事項。", height=115, key="report_overview")
     sections = []
     for region, names in markets.items():
+        available = [(name, cache.get(name, (None, None, None))[0]) for name in names]
+        available = [(name, x) for name, x in available if x]
+        if not available:
+            continue
         with st.expander(region, expanded=region in ("🇹🇼 台灣", "🇯🇵 日本")):
             notes = st.text_area("事件／原因與下週觀察（人工核對）", key=f"report_notes_{region}", height=100)
             items = []
-            for name in names:
-                x, _, _ = cache.get(name, (None, None, None))
-                if x:
-                    items.append(f"{name}：最新 {x['最新']:,.2f}；本週 {x['本週%']:+.2f}%；近一月 {x['近1月%']:+.2f}%；趨勢{x['趨勢']}。資料日期：{x['日期']}。")
-                else:
-                    items.append(f"{name}：行情暫缺，待核對。")
+            for name, x in available:
+                items.append(f"{name}：最新 {x['最新']:,.2f}；本週 {x['本週%']:+.2f}%；近一月 {x['近1月%']:+.2f}%；趨勢{x['趨勢']}。資料日期：{x['日期']}。")
             st.write("\n\n".join(items))
             sections.append((region, notes, items))
-    if not any(cache.get(name, (None,))[0] for names in markets.values() for name in names):
-        st.warning("目前沒有取得行情。仍可編輯摘要並下載空白報告，市場條目會標示資料暫缺。")
+    if not any(items for _, _, items in sections):
+        st.warning("目前沒有取得指數行情；報告會略過行情表，仍可帶入會議記錄與講稿。")
+
+    st.subheader("會議記錄與講稿")
+    st.caption("可帶入上方產生的文件與講稿，下載前仍可修改；沒有內容的章節不會輸出。")
+    sources = {
+        "report_meeting_text": meeting_text_from_docx(st.session_state.get("ne_meeting_doc")),
+        "report_technical_script": st.session_state.get("ne_full_report_edit", ""),
+        "report_navigation_script": st.session_state.get("navigation_script_edit", ""),
+    }
+    if st.button("帶入目前的會議記錄與講稿", key="report_import_sources"):
+        st.session_state.update(sources)
+    for key, value in sources.items():
+        st.session_state.setdefault(key, value)
+    meeting = st.text_area("會議記錄（含國別技術分析）", key="report_meeting_text", height=220)
+    technical_script = st.text_area("六國技術線講稿", key="report_technical_script", height=220)
+    navigation_script = st.text_area("投資導航講稿", key="report_navigation_script", height=220)
+    for title, content in (("會議記錄", meeting), ("六國技術線講稿", technical_script), ("投資導航講稿", navigation_script)):
+        if content.strip():
+            sections.append((title, content.strip(), []))
     st.caption("下載檔案會使用畫面上當前填寫的內容；文字欄位只在此瀏覽器工作階段保留。")
     c1, c2 = st.columns(2)
     c1.download_button("下載 Word 報告", report_docx(start, end, overview, sections),
