@@ -26,6 +26,26 @@ def meeting_text_from_docx(data):
     return "\n".join(lines)
 
 
+def parse_meeting_rows(text):
+    """Split the editable meeting text into heading lines and market rows."""
+    headings, rows = [], []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "｜" in line:
+            market, analysis = line.split("｜", 1)
+            if market.strip() and analysis.strip():
+                rows.append((market.strip(), analysis.strip()))
+                continue
+        if rows:
+            market, analysis = rows[-1]
+            rows[-1] = (market, analysis + "\n" + line)
+        else:
+            headings.append(line)
+    return headings, rows
+
+
 def report_docx(start, end, overview, sections):
     from docx import Document
     from docx.shared import Cm, Pt
@@ -45,6 +65,21 @@ def report_docx(start, end, overview, sections):
     doc.add_paragraph(overview or "待補充")
     for title, notes, items in sections:
         doc.add_heading(title, 1)
+        if title == "會議記錄":
+            headings, rows = parse_meeting_rows(notes)
+            for line in headings:
+                doc.add_paragraph(line)
+            if rows:
+                table = doc.add_table(rows=1, cols=2)
+                table.style = "Table Grid"
+                table.columns[0].width = Cm(2.5)
+                table.columns[1].width = Cm(15)
+                table.rows[0].cells[0].text = "國別"
+                table.rows[0].cells[1].text = "技術線分析"
+                for market, analysis in rows:
+                    cells = table.add_row().cells
+                    cells[0].text, cells[1].text = market, analysis
+            continue
         if notes.strip():
             doc.add_paragraph(notes.strip())
         for item in items:
@@ -123,6 +158,29 @@ def report_pptx(start, end, overview, sections):
 
     add_text_pages("本週重點", overview or "待補充")
     for title, notes, items in sections:
+        if title == "會議記錄":
+            headings, rows = parse_meeting_rows(notes)
+            if headings:
+                add_text_pages(title, "\n".join(headings))
+            for market, analysis in rows:
+                lines = [line.strip() for line in analysis.splitlines() if line.strip()]
+                for index, line in enumerate(lines):
+                    slide = new_slide(f"會議記錄・{market}" + (f"（{index + 1}/{len(lines)}）" if len(lines) > 1 else ""))
+                    table = slide.shapes.add_table(2, 2, Inches(1.1), Inches(2.15), Inches(7.8), Inches(3.9)).table
+                    table.columns[0].width = Inches(1.2)
+                    table.columns[1].width = Inches(6.6)
+                    period, sep, detail = line.partition("：")
+                    for row, values in enumerate((("週期", "技術線分析"), (period if sep else market, detail if sep else line))):
+                        for col, value in enumerate(values):
+                            cell = table.cell(row, col)
+                            cell.text = value
+                            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                            for paragraph in cell.text_frame.paragraphs:
+                                for run in paragraph.runs:
+                                    run.font.name = FONT
+                                    run.font.size = Pt(18)
+                                    run.font.color.rgb = RGBColor(15, 38, 50)
+            continue
         content = "\n".join(([notes.strip()] if notes.strip() else []) + ["• " + item for item in items])
         add_text_pages(title, content or "待補充")
     add_text_pages("資料與使用說明", "指數漲跌由最近可用收盤價計算；各項資料日期以條目所列為準。事件及原因請人工核對。\n僅供內部教育訓練與市場研究。")
