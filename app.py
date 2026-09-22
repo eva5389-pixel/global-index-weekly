@@ -7,6 +7,7 @@ import altair as alt
 import hashlib
 from io import BytesIO
 from datetime import datetime
+from weekly_report import render_weekly_report
 
 st.set_page_config(page_title="全球指數週動態",page_icon="🌏",layout="wide")
 st.title("🌏 全球指數一週動態・市場解說")
@@ -561,7 +562,7 @@ except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
 st.divider()
 
-tab1,tab2,tab3,tab4,tab5=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口"])
+tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口","📝 每週市場報告"])
 rows=[]; cache={}
 for region,items in MARKETS.items():
     for name,ticker in items.items():
@@ -643,5 +644,8 @@ with tab5:
         st.link_button("開啟 IMF DataMapper","https://www.imf.org/external/datamapper/datasets/WEO")
     except Exception as e:
         st.warning("IMF 經濟與進出口資料目前無法取得："+str(e))
+
+with tab6:
+    render_weekly_report(cache, MARKETS)
 
 st.caption("最後更新執行："+datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
