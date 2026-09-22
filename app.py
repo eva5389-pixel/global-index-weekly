@@ -8,6 +8,7 @@ import hashlib
 from io import BytesIO
 from datetime import datetime
 from weekly_report import render_weekly_report
+from wantgoo_capture import render_wantgoo_capture
 
 st.set_page_config(page_title="全球指數週動態",page_icon="🌏",layout="wide")
 st.title("🌏 全球指數一週動態・市場解說")
@@ -562,7 +563,7 @@ except Exception as e:
     st.warning("技術線資料目前無法取得："+str(e))
 st.divider()
 
-tab1,tab2,tab3,tab4,tab5,tab6=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口","📝 每週市場報告"])
+tab1,tab2,tab3,tab4,tab5,tab6,tab7=st.tabs(["🗺️ 一週市場地圖","🌐 各國解說","🧭 跨資產","📊 估值與企業獲利","🌏 經濟與進出口","📝 每週市場報告","📸 玩股網技術線"])
 rows=[]; cache={}
 for region,items in MARKETS.items():
     for name,ticker in items.items():
@@ -647,5 +648,8 @@ with tab5:
 
 with tab6:
     render_weekly_report(cache, MARKETS)
+
+with tab7:
+    render_wantgoo_capture()
 
 st.caption("最後更新執行："+datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
