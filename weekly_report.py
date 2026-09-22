@@ -80,12 +80,10 @@ def report_pptx(start, end, overview, sections):
         slide = prs.slides.add_slide(blank)
         slide.shapes.add_picture(BytesIO(background_image), 0, 0,
                                  width=prs.slide_width, height=prs.slide_height)
-        # Mask the fixed label in the supplied image; retain the logo and footer.
         if cover:
-            textbox(slide, title, 1.45, 2.18, 7.1, 1.35, center=True, fill=(237, 246, 255))
+            textbox(slide, title, 1.45, 2.18, 7.1, 1.35, center=True)
         else:
-            textbox(slide, "", 1.1, 1.54, 7.8, 5.08, fill=(255, 255, 255))
-            textbox(slide, title, 1.35, 1.57, 7.3, .5, center=True)
+            textbox(slide, title, 1.35, 1.42, 7.3, .5, center=True)
         return slide
 
     cover = new_slide("全球市場每週報告", cover=True)
@@ -105,7 +103,7 @@ def report_pptx(start, end, overview, sections):
         chunks = [lines[i:i + 10] for i in range(0, len(lines), 10)] or [["待補充"]]
         for index, chunk in enumerate(chunks):
             slide = new_slide(title + (f"（續 {index + 1}）" if index else ""))
-            textbox(slide, "\n".join(chunk), 1.35, 2.27, 7.3, 4.2)
+            textbox(slide, "\n".join(chunk), 1.35, 2.1, 7.3, 4.45)
 
     add_text_pages("本週重點", overview or "待補充")
     for title, notes, items in sections:
